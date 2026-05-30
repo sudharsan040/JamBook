@@ -1,0 +1,43 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm install esbuild react react-dom --no-save
+
+      - name: Build app
+        run: |
+          mkdir -p dist
+          npx esbuild src/app.jsx \
+            --bundle \
+            --minify \
+            --loader:.jsx=jsx \
+            --jsx=automatic \
+            --jsx-import-source=react \
+            --define:process.env.NODE_ENV='"production"' \
+            --target=es2020 \
+            --format=iife \
+            --outfile=dist/app.js
+
+      - name: Commit built file
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/app.js
+          git diff --staged --quiet || git commit -m "build: dist/app.js [skip ci]"
+          git push
