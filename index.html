@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#0f0f14"/>
+<title>JamBook — Multilingual Song Jamming</title>
+<link rel="preconnect" href="https://unpkg.com" crossorigin/>
+<link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin/>
+<link rel="preconnect" href="https://itunes.apple.com" crossorigin/>
+<link rel="dns-prefetch" href="https://lrclib.net"/>
+<link rel="dns-prefetch" href="https://translate.googleapis.com"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  * { box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; background: #0f0f14; color: #e8e8f0; margin: 0; }
+  .tamil-text  { font-family: 'Latha', 'Tamil MN', serif; }
+  .chord-badge { font-family: 'Courier New', monospace; }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: #1a1a24; }
+  ::-webkit-scrollbar-thumb { background: #3a3a54; border-radius: 3px; }
+  .lyric-line:hover { background: rgba(139,92,246,.08); border-radius: 8px; }
+  .scroll-active { animation: pulseGlow 2s ease-in-out infinite; }
+  @keyframes pulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,.4)}50%{box-shadow:0 0 0 6px rgba(139,92,246,0)} }
+  .tag-male    { background:rgba(59,130,246,.2);  color:#93c5fd; border:1px solid rgba(59,130,246,.3); }
+  .tag-female  { background:rgba(236,72,153,.2);  color:#f9a8d4; border:1px solid rgba(236,72,153,.3); }
+  .tag-chorus  { background:rgba(16,185,129,.2);  color:#6ee7b7; border:1px solid rgba(16,185,129,.3); }
+  .tag-duet    { background:rgba(245,158,11,.2);  color:#fcd34d; border:1px solid rgba(245,158,11,.3); }
+  .tag-humming { background:rgba(168,85,247,.2);  color:#d8b4fe; border:1px solid rgba(168,85,247,.3); }
+  .speed-btn.active { background:#7c3aed; color:white; }
+  .folder-card:hover { border-color:#7c3aed!important; background:rgba(124,58,237,.1); }
+  input:focus, select:focus { outline:none; border-color:#7c3aed; }
+  .lang-pill.active { background:#7c3aed; color:white; }
+  .script-toggle { background:#1e1e2e; border:1px solid #2e2e42; border-radius:9999px; padding:2px; display:flex; }
+  .script-opt  { padding:4px 14px; border-radius:9999px; cursor:pointer; font-size:12px; font-weight:500; transition:all .2s; white-space:nowrap; }
+  .script-opt.active { background:#7c3aed; color:white; }
+  .sidebar-transition { transition:width .25s cubic-bezier(.4,0,.2,1); overflow:hidden; }
+  .queue-song-active { background:rgba(124,58,237,.2)!important; border-color:rgba(124,58,237,.5)!important; }
+  .queue-song:hover  { border-color:rgba(124,58,237,.3)!important; }
+  .auth-bg   { background:radial-gradient(ellipse at 60% 40%,rgba(124,58,237,.15) 0%,transparent 60%),#0f0f14; }
+  .auth-card { background:rgba(20,20,32,.95); border:1px solid #2a2a3e; backdrop-filter:blur(12px); }
+  .avatar    { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; flex-shrink:0; }
+  .toast     { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1e1e30; border:1px solid #3a3a54; color:#e8e8f0; padding:10px 20px; border-radius:10px; font-size:13px; z-index:9999; animation:fadeUp .3s ease; pointer-events:none; }
+  @keyframes fadeUp { from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:100; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
+  .modal-box   { background:#13131e; border:1px solid #2e2e44; border-radius:16px; padding:28px; width:360px; max-height:90vh; overflow-y:auto; }
+  .share-badge { font-family:'Courier New',monospace; letter-spacing:.15em; font-size:22px; font-weight:700; color:#a78bfa; background:rgba(124,58,237,.15); border:1px solid rgba(124,58,237,.3); border-radius:10px; padding:10px 20px; text-align:center; }
+  .drawer-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:80; backdrop-filter:blur(2px); }
+  .drawer-panel    { position:fixed; top:0; right:0; bottom:0; width:78vw; max-width:320px; background:#0d0d18; z-index:81; box-shadow:-8px 0 24px rgba(0,0,0,.5); animation:slideIn .25s cubic-bezier(.4,0,.2,1); }
+  @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+  .mobile-search-bar { position:fixed; bottom:0; left:0; right:0; padding:10px 12px; background:rgba(13,13,24,.97); border-top:1px solid #1a1a2a; z-index:40; backdrop-filter:blur(8px); }
+  .stanza          { margin-bottom:1.4rem; }
+  .stanza-line     { font-size:1.25rem; line-height:1.85; color:#e8e8f0; font-weight:500; }
+  .stanza-section  { font-size:.7rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.5rem; padding:3px 10px; border-radius:9999px; display:inline-block; }
+  .chord-line      { font-family:'Courier New',monospace; font-size:.95rem; font-weight:700; color:#a78bfa; letter-spacing:.05em; }
+  .shimmer     { background:linear-gradient(90deg,#1a1a2e 25%,#252540 50%,#1a1a2e 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:6px; }
+  @keyframes shimmer { 0%{background-position:200% 0}100%{background-position:-200% 0} }
+  .curated-badge { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
+  .live-badge    { background:rgba(16,185,129,.15);  color:#34d399; border:1px solid rgba(16,185,129,.3); }
+</style>
+</head>
+<body>
+<div id="root">
+  <!-- Inline splash shown immediately, replaced by React on mount -->
+  <div style="background:radial-gradient(ellipse at 60% 40%,rgba(124,58,237,.15) 0%,transparent 60%),#0f0f14;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Inter,system-ui,-apple-system,sans-serif;color:#e8e8f0;">
+    <div style="font-size:48px;margin-bottom:8px;">🎸</div>
+    <div style="font-size:22px;font-weight:700;letter-spacing:.5px;">JamBook</div>
+    <div style="font-size:12px;color:#71717a;margin-top:4px;">The Vibe is Here ✨</div>
+    <div style="margin-top:24px;width:24px;height:24px;border:2px solid #7c3aed;border-top-color:transparent;border-radius:50%;animation:jb-spin 1s linear infinite;"></div>
+    <style>@keyframes jb-spin{to{transform:rotate(360deg)}}</style>
+  </div>
+</div>
+<script defer src="dist/app.js"></script>
+</body>
+</html>
