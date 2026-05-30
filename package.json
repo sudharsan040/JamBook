@@ -1,0 +1,6 @@
+{
+  "name": "jambook",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multilingual song jamming app — built into dist/app.js by GitHub Actions"
+}
