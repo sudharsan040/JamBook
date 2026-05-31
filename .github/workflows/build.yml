@@ -40,8 +40,8 @@ jobs:
             --jsx=automatic \
             --jsx-import-source=react \
             --define:process.env.NODE_ENV='"production"' \
-            --define:process.env.SUPABASE_URL="\"${SUPABASE_URL}\"" \
-            --define:process.env.SUPABASE_KEY="\"${SUPABASE_KEY}\"" \
+            --define:process.env.SUPABASE_URL="\"${SUPABASE_URL}\"https://ztgntzelqnosogkzarjw.supabase.co" \
+            --define:process.env.SUPABASE_KEY="\"${SUPABASE_KEY}\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0Z250emVscW5vc29na3phcmp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTIxNDAsImV4cCI6MjA5NTYyODE0MH0.WG9ozARaBQuFbmljKs7dRSd9iuyXOBPjt9vP887M6GA" \
             --target=es2020 \
             --format=iife \
             --outfile=dist/app.js
