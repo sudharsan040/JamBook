@@ -12,10 +12,14 @@ const LANG_COLORS   = {Tamil:"bg-orange-900/30 text-orange-400",Hindi:"bg-blue-9
 const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc2626","#4f46e5","#0d9488"];
 
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
-// Paste your project URL + anon key from Supabase → Settings → API.
-// If left blank the app falls back to localStorage (single-device).
+// `process.env.SUPABASE_URL` and `process.env.SUPABASE_KEY` are LITERAL string
+// references that esbuild replaces at build time via build.mjs `define:` config.
+// In the browser there's no actual `process` global — these get inlined as
+// plain string literals during bundling, falling back to "" if the secret
+// wasn't set in GitHub Actions.
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
+
 const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
   : null;
@@ -237,7 +241,8 @@ const LOANWORD_ENTRIES = [
   ['bike',['paik','baik','paikku']],
   ['car',['kaar','kaaru','car']],
   ['bus',['bas','bus','basu']],
-  ['train',['train','rayil','reyil','trayinu']],
+  // 'rayil/reyil' removed — naturalized Tamil word, keep as "rayile"
+  ['train',['train','trayinu','trayin']],
   ['plane',['plain','plaen']],
   ['aeroplane',['aeroplain','aeroplane','aeroplaen']],
   ['taxi',['taeksi','taksi']],
@@ -266,7 +271,8 @@ const LOANWORD_ENTRIES = [
   ['film',['film','filim','film']],
   ['cinema',['cinema','kinema','sinema']],
   ['record',['rekord','rekkard']],
-  ['song',['sangu','song']],
+  // 'sangu' removed — Tamil word for conch shell, not always "song"
+  ['song',['song']],
   ['music',['myoosik','musik']],
   ['mike',['maik','maiku']],
   // clothing
@@ -287,7 +293,8 @@ const LOANWORD_ENTRIES = [
   ['belt',['belt','beltu']],
   ['dress',['dres','dressu']],
   ['skirt',['skart','skartu']],
-  ['saree',['sari','saaree']],
+  // 'sari' removed — collides with Tamil "சரி" (correct/okay)
+  ['saree',['saaree']],
   // places
   ['school',['skool','iskool','school']],
   ['college',['kalej','kaalej','collage','kollej']],
@@ -310,7 +317,8 @@ const LOANWORD_ENTRIES = [
   ['village',['vilej','village']],
   // food / drink
   ['coffee',['kafi','kaafi','kappi']],
-  ['tea',['tee','tea']],
+  // 'tee' removed — collides with Tamil "தீ" (fire)
+  ['tea',['tea']],
   ['milk',['milku','milkku']],
   ['water',['vaattar','vottar']],
   ['juice',['joos','joosu','joosi']],
@@ -346,7 +354,8 @@ const LOANWORD_ENTRIES = [
   ['hello',['hellow','helow','hellaa']],
   ['bye',['baai','baay','bai']],
   ['thank you',['thaengyu','thangyu','thaenkyu']],
-  ['sorry',['sori','saari']],
+  // 'sori' removed — collides with Tamil "சொரி" (itch)
+  ['sorry',['saari','saaree']],
   ['please',['plees','pleesu']],
   ['ok',['oake','okay']],
   ['party',['paarti','party']],
@@ -369,7 +378,8 @@ const LOANWORD_ENTRIES = [
   ['body',['bodi','bady']],
   ['hair',['her','hair']],
   // money / work
-  ['money',['manni','mani','money']],
+  // 'manni' (forgive) / 'mani' (bell, hour) removed — Tamil words
+  ['money',['money']],
   ['rupee',['roopay','roobaai']],
   ['dollar',['daalar','dollaar']],
   ['salary',['salari','saelari']],
@@ -388,7 +398,8 @@ const LOANWORD_ENTRIES = [
   ['number',['nambar','number']],
   // misc household / objects
   ['ticket',['tikket','tikkat']],
-  ['key',['kee','key']],
+  // 'kee' removed — collides with Tamil "கீ" (below/under)
+  ['key',['key']],
   ['watch',['vaach','vaach']],
   ['book',['buk','book']],
   ['paper',['peppar','papar']],
@@ -427,8 +438,9 @@ function applyLoanwords(text) {
     const lower = token.toLowerCase();
     // Exact match first
     if (LOANWORD_MAP[lower]) return LOANWORD_MAP[lower];
-    // Prefix + Tamil case suffix
+    // Prefix + Tamil case suffix — only for stems ≥ 5 chars to reduce false positives
     for (const k of LOANWORD_KEYS_SORTED) {
+      if (k.length < 5) continue;                 // ⚠ short stems are exact-only
       if (lower.length <= k.length) continue;
       if (lower.startsWith(k)) {
         const suffix = lower.slice(k.length);
