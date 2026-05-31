@@ -4,7 +4,7 @@
 
 JamBook is a free, ad-free, single-page web app for finding song lyrics, transliterating them into Roman script (Tanglish / Hinglish / etc.), and organising them into session folders you can share with your jam group.
 
-Live demo: **https://YOUR-USERNAME.github.io/YOUR-REPO**
+Live demo: **https://sudharsan040.github.io/JamBook/**
 
 ---
 
