@@ -12,11 +12,8 @@ const LANG_COLORS   = {Tamil:"bg-orange-900/30 text-orange-400",Hindi:"bg-blue-9
 const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc2626","#4f46e5","#0d9488"];
 
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
-// `process.env.SUPABASE_URL` and `process.env.SUPABASE_KEY` are LITERAL string
-// references that esbuild replaces at build time via build.mjs `define:` config.
-// In the browser there's no actual `process` global — these get inlined as
-// plain string literals during bundling, falling back to "" if the secret
-// wasn't set in GitHub Actions.
+// `process.env.SUPABASE_URL` / `SUPABASE_KEY` are LITERAL references that
+// esbuild replaces at build time via build.mjs `define:`.
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
@@ -1531,7 +1528,7 @@ function ChordButton({ song }) {
 }
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
-function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong}) {
+function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -1539,18 +1536,28 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [showFolderMenu, setFolderMenu] = React.useState(false);
   const [script,     setScript]     = React.useState("roman"); // "roman" | "native"
   const [wasCached,  setWasCached]  = React.useState(false);
-  const [googleRoman,setGoogleRoman]= React.useState(null);   // best-quality version
-  const [preferLocal, setPreferLocal] = React.useState(false); // user can force rule-based
+  const [googleRoman,setGoogleRoman]= React.useState(null);
+  const [preferLocal, setPreferLocal] = React.useState(false);
   const [romanizing, setRomanizing] = React.useState(false);
   const scrollRef = React.useRef(null);
 
-  // Re-read cache + reset state whenever song.id changes
+  const hasCustomLyrics = !!song.customLyrics;
+  const isCustomSong    = song.type === "custom";
+
+  // Re-read cache + reset state whenever song.id changes.
+  // If the song carries its own customLyrics (user-added or user-edited),
+  // skip API fetch entirely.
   React.useEffect(() => {
     setGoogleRoman(null); setRomanizing(false);
+    if (hasCustomLyrics) {
+      setLyricsData({ lyrics: song.customLyrics, source: isCustomSong ? "your lyrics" : "your edit" });
+      setLoading(false); setNotFound(false); setWasCached(true);
+      return;
+    }
     const cached = getCachedLyrics(song.id);
     if (cached) {
       setLyricsData(cached); setLoading(false); setNotFound(false); setWasCached(true);
-      if (cached.googleRoman) setGoogleRoman(cached.googleRoman); // already enhanced
+      if (cached.googleRoman) setGoogleRoman(cached.googleRoman);
       return;
     }
     setLyricsData(null); setLoading(true); setNotFound(false); setWasCached(false);
@@ -1559,7 +1566,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
       else        { setNotFound(true); }
       setLoading(false);
     });
-  }, [song.id]);
+  }, [song.id, song.customLyrics]);
 
   // Switch source manually
   const switchSource = async (src) => {
@@ -1572,20 +1579,18 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
   const otherSources = LYRIC_SOURCES.filter(s => s !== lyricsData?.source);
 
-  // If source returned pre-Romanized text (e.g. tamil2lyrics), the toggle is hidden.
   const preRomanized = !!lyricsData?.alreadyRomanized;
   const nativeScript = (!preRomanized && lyricsData?.lyrics) ? detectScript(lyricsData.lyrics) : null;
 
   // Kick off Google romanization once lyrics arrive (if needed and not cached).
   React.useEffect(() => {
     if (!lyricsData?.lyrics || preRomanized || !nativeScript) return;
-    if (googleRoman) return; // already have it
+    if (googleRoman) return;
     setRomanizing(true);
     googleRomanize(lyricsData.lyrics).then(roman => {
       setRomanizing(false);
       if (roman) {
         setGoogleRoman(roman);
-        // Persist alongside the cached lyrics object
         setCachedLyrics(song.id, { ...lyricsData, googleRoman: roman });
       }
     });
@@ -1595,7 +1600,6 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
     if (!lyricsData?.lyrics) return null;
     if (preRomanized) return lyricsData.lyrics;
     if (script === "roman" && nativeScript) {
-      // Prefer Google's natural output; fall back to rule-based until it arrives
       if (preferLocal || !googleRoman) return transliterateLocal(lyricsData.lyrics);
       return googleRoman;
     }
@@ -1626,7 +1630,13 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             {/* Desktop actions inline */}
             {!isMobile && (
               <div className="flex gap-1.5 flex-shrink-0">
-                <ChordButton song={song} />
+                {!isCustomSong && <ChordButton song={song} />}
+                {activeFolder && onEditSong && (
+                  <button onClick={()=>onEditSong(song)} title="Edit lyrics for this song (your account only)"
+                    className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">
+                    ✎ Edit
+                  </button>
+                )}
                 <div className="relative">
                   <button onClick={()=>setFolderMenu(v=>!v)}
                     className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁 Add</button>
@@ -1649,7 +1659,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {/* Row 2 on mobile: action icons */}
           {isMobile && (
             <div className="flex gap-1.5 mt-2">
-              <ChordButton song={song} />
+              {!isCustomSong && <ChordButton song={song} />}
+              {activeFolder && onEditSong && (
+                <button onClick={()=>onEditSong(song)} title="Edit lyrics"
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">✎</button>
+              )}
               <div className="relative">
                 <button onClick={()=>setFolderMenu(v=>!v)}
                   className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁</button>
@@ -1837,7 +1851,117 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 }
 
 // ─── Folder View ──────────────────────────────────────────────────────
-function FolderView({folder,songs,onOpenSong,onRemove,onBack}) {
+// ─── Lyrics Editor Modal ─────────────────────────────────────────────
+// Handles both "add new custom song" and "edit existing song's lyrics".
+// `initialSong` shape: { id?, title, artist, album, language, lyrics }
+// Returns updated song via onSave(songData).
+function LyricsEditorModal({ initialSong, mode, onSave, onClose }) {
+  const isEdit = mode === "edit";
+  const [title,    setTitle]    = React.useState(initialSong?.title    || "");
+  const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
+  const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
+  const [language, setLanguage] = React.useState(initialSong?.language || "Tamil");
+  const [lyrics,   setLyrics]   = React.useState(initialSong?.customLyrics || initialSong?.lyrics || "");
+  const [err, setErr] = React.useState("");
+  const lyricsRef = React.useRef(null);
+
+  const insertAtCursor = (snippet) => {
+    const el = lyricsRef.current; if (!el) return;
+    const start = el.selectionStart, end = el.selectionEnd;
+    const before = lyrics.slice(0, start), after = lyrics.slice(end);
+    const sep = (before && !before.endsWith("\n")) ? "\n" : "";
+    const next = before + sep + snippet + "\n" + after;
+    setLyrics(next);
+    // Move cursor after the inserted text
+    setTimeout(() => {
+      const pos = (before + sep + snippet + "\n").length;
+      el.focus(); el.setSelectionRange(pos, pos);
+    }, 0);
+  };
+
+  const save = () => {
+    setErr("");
+    if (!title.trim())  { setErr("Title is required."); return; }
+    if (!lyrics.trim()) { setErr("Lyrics can't be empty."); return; }
+    onSave({
+      title:        title.trim(),
+      artist:       artist.trim() || "Unknown",
+      album:        album.trim()  || "",
+      language:     language,
+      customLyrics: lyrics,
+    });
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e=>e.stopPropagation()} style={{width:"min(560px, 95vw)"}}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-bold text-white">{isEdit ? "Edit Lyrics" : "Add Your Own Song"}</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 font-medium mb-1 block">Title <span className="text-red-400">*</span></label>
+            <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus={!isEdit}
+              className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
+              placeholder="Song title" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-gray-400 font-medium mb-1 block">Singer</label>
+              <input value={artist} onChange={e=>setArtist(e.target.value)}
+                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
+                placeholder="Optional" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 font-medium mb-1 block">Movie / Album</label>
+              <input value={album} onChange={e=>setAlbum(e.target.value)}
+                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
+                placeholder="Optional" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 font-medium mb-1 block">Language</label>
+            <select value={language} onChange={e=>setLanguage(e.target.value)}
+              className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
+              {LANGUAGES.filter(l => l !== "All").map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+
+          {/* Vocal/chord toolbar */}
+          <div className="flex flex-wrap gap-1 pt-1">
+            <span className="text-xs text-gray-600 self-center mr-1">Insert:</span>
+            {["[Verse]","[Chorus]","[Male]","[Female]","[Duet]","[Humming]","[Bridge]"].map(m => (
+              <button key={m} type="button" onClick={()=>insertAtCursor(m)}
+                className="text-xs px-2 py-0.5 rounded-md border border-[#2a2a3e] text-gray-400 hover:border-violet-500 hover:text-violet-400">
+                {m}
+              </button>
+            ))}
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-400 font-medium mb-1 block">Lyrics <span className="text-red-400">*</span></label>
+            <textarea ref={lyricsRef} value={lyrics} onChange={e=>setLyrics(e.target.value)}
+              rows={12}
+              className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 font-mono leading-relaxed resize-y"
+              placeholder={`Paste your lyrics here...\n\nTip:\n[Chorus]   ← marks a section\n[Male]     ← Male singer\nC  G  Am   ← chord line (letters only)\n\nThen put the lyric lines.`} />
+            <p className="text-xs text-gray-600 mt-1">Markers like <code className="text-violet-400">[Chorus]</code> or <code className="text-violet-400">[Male]</code> add vocal tags. Lines with only chord letters (e.g. <code className="text-violet-400">C G Am F</code>) render as chord rows.</p>
+          </div>
+
+          {err && <p className="text-red-400 text-xs">{err}</p>}
+
+          <button onClick={save}
+            className="w-full py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+            {isEdit ? "Save Edits" : "Add Song"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong}) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
@@ -1847,13 +1971,18 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack}) {
             <h2 className="text-base sm:text-xl font-bold text-white truncate">📁 {folder.name}</h2>
             <p className="text-xs text-gray-500 mt-0.5">{songs.length} song{songs.length!==1?"s":""}</p>
           </div>
+          <button onClick={onAddCustom}
+            title="Add your own lyrics"
+            className="text-xs px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all flex-shrink-0">
+            ＋ Add Lyrics
+          </button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-5 space-y-2 sm:space-y-3">
         {songs.length===0&&(
           <div className="text-center py-16 text-gray-500">
             <div className="text-4xl mb-3">🎵</div>
-            <p>No songs yet. Search and add some!</p>
+            <p>No songs yet. Search & add, or tap <span className="text-violet-400 font-semibold">+ Add Lyrics</span> to add your own.</p>
           </div>
         )}
         {songs.map((song,i)=>(
@@ -1861,12 +1990,20 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack}) {
             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
               <span className="text-lg sm:text-xl font-bold text-violet-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
               <div className="min-w-0 flex-1">
-                <div className="font-semibold text-white truncate text-sm sm:text-base">{song.title}</div>
+                <div className="font-semibold text-white truncate text-sm sm:text-base">
+                  {song.title}
+                  {song.type === "custom" && <span className="ml-1.5 text-xs text-violet-400">●</span>}
+                  {song.customLyrics && song.type !== "custom" && <span className="ml-1.5 text-xs text-amber-400">✎</span>}
+                </div>
                 <div className="text-xs text-gray-400 truncate">{song.artist||song.singer}</div>
               </div>
             </div>
-            <button onClick={()=>onRemove(folder.id,song.id)}
-              className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all flex-shrink-0">✕</button>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button onClick={()=>onEditSong(song)} title="Edit lyrics"
+                className="text-gray-600 hover:text-violet-400 text-sm px-1.5 transition-all">✎</button>
+              <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
+                className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
+            </div>
           </div>
         ))}
       </div>
@@ -2369,6 +2506,56 @@ function App() {
 
   const selectFolder = id => { setActiveFolderId(id); setView("folder"); };
 
+  // ─── Custom-lyrics state ──────────────────────────────────────────
+  // editorState: { mode: "new"|"edit", folderId, song? }
+  const [editorState, setEditorState] = React.useState(null);
+
+  const openAddCustom = (folderId) => {
+    setEditorState({ mode: "new", folderId });
+  };
+  const openEditSong = (folderId, song) => {
+    setEditorState({ mode: "edit", folderId, song });
+  };
+
+  // Save handler — covers both new-custom and edit-existing
+  const saveLyricsEdit = async (data) => {
+    if (!editorState) return;
+    const { mode, folderId, song } = editorState;
+    const folder = folders.find(f => f.id === folderId);
+    if (!folder) { setEditorState(null); return; }
+
+    let updated;
+    if (mode === "new") {
+      const newSong = {
+        id:           "cs_" + (window.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(36).slice(2,8))),
+        type:         "custom",
+        title:        data.title,
+        artist:       data.artist,
+        album:        data.album,
+        language:     data.language,
+        customLyrics: data.customLyrics,
+      };
+      updated = { ...folder, songs: [...folder.songs, newSong] };
+      showToast(`Added "${data.title}"`);
+    } else {
+      // Edit existing — overwrite that song's fields (title/artist editable too)
+      updated = {
+        ...folder,
+        songs: folder.songs.map(s => s.id === song.id
+          ? { ...s, title: data.title, artist: data.artist, album: data.album, language: data.language, customLyrics: data.customLyrics }
+          : s),
+      };
+      // If the active song is this one, refresh its in-memory copy so the editor reflects immediately
+      if (activeSong && activeSong.id === song.id) {
+        setActiveSong({ ...activeSong, title: data.title, artist: data.artist, album: data.album, language: data.language, customLyrics: data.customLyrics });
+      }
+      showToast(`Lyrics saved`);
+    }
+    setFolders(f => f.map(x => x.id === folderId ? updated : x));
+    await db.updateFolder(user, updated);
+    setEditorState(null);
+  };
+
   const importFolder = async (entry) => {
     const songs = (entry.songs || []).map(s => ({ ...s, type: s.type || "live" }));
     songs.forEach(cacheSong);
@@ -2430,10 +2617,12 @@ function App() {
             activeFolder={activeFolder} folderSongs={folderSongs} onOpenSong={s=>openSong(s,activeFolderId)}
           />
         )}
-        {view==="song"&&activeSong&&activeSong.type==="live"&&(
+        {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
           <LiveSongView
             song={activeSong} onBack={()=>setView("search")} folders={folders} onAddToFolder={addToFolder}
-            activeFolder={activeFolder} folderSongs={folderSongs} onOpenSong={s=>openSong(s,activeFolderId)}
+            activeFolder={activeFolder} folderSongs={folderSongs}
+            onOpenSong={s=>openSong(s,activeFolderId)}
+            onEditSong={activeFolder ? (s)=>openEditSong(activeFolder.id, s) : null}
           />
         )}
         {view==="folder"&&activeFolder&&(
@@ -2442,9 +2631,20 @@ function App() {
             onOpenSong={s=>openSong(s,activeFolder.id)}
             onRemove={removeFromFolder}
             onBack={()=>{setView("search");setActiveFolderId(null);}}
+            onAddCustom={()=>openAddCustom(activeFolder.id)}
+            onEditSong={(s)=>openEditSong(activeFolder.id, s)}
           />
         )}
       </main>
+
+      {editorState && (
+        <LyricsEditorModal
+          mode={editorState.mode}
+          initialSong={editorState.song || null}
+          onSave={saveLyricsEdit}
+          onClose={()=>setEditorState(null)}
+        />
+      )}
 
       {shareTarget && (
         <ShareModal
