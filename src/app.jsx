@@ -1093,17 +1093,20 @@ function AutoScrollControl({scrollRef}) {
   React.useEffect(()=>{ if(on) start(speed); else stop(); return stop; },[on,speed]);
 
   return (
-    <div className={`flex items-center gap-2 bg-[#1a1a2e] border rounded-xl px-3 py-2 ${on?"border-violet-500 scroll-active":"border-[#2e2e44]"}`}>
-      <span className="text-xs text-gray-400 font-medium">Auto-Scroll</span>
-      <div className="flex gap-1">
+    <div className={`flex items-center gap-1 sm:gap-2 bg-[#1a1a2e] border rounded-xl px-2 sm:px-3 py-1.5 sm:py-2 ${on?"border-violet-500 scroll-active":"border-[#2e2e44]"}`}>
+      <span className="text-xs text-gray-400 font-medium hidden sm:inline">Auto-Scroll</span>
+      <div className="flex gap-0.5 sm:gap-1">
         {SCROLL_SPEEDS.map(s=>(
-          <button key={s.key} onClick={()=>setSpeed(s.key)}
-            className={`speed-btn text-xs px-2 py-1 rounded-lg border font-medium transition-all ${speed===s.key?"active border-violet-600":"border-[#2e2e44] text-gray-400 hover:border-gray-500"}`}>{s.label}</button>
+          <button key={s.key} onClick={()=>setSpeed(s.key)} title={s.label}
+            className={`speed-btn text-xs px-1.5 sm:px-2 py-1 rounded-md sm:rounded-lg border font-medium transition-all ${speed===s.key?"active border-violet-600":"border-[#2e2e44] text-gray-400 hover:border-gray-500"}`}>
+            <span className="sm:hidden">{s.label[0]}</span>
+            <span className="hidden sm:inline">{s.label}</span>
+          </button>
         ))}
       </div>
-      <button onClick={()=>setOn(v=>!v)}
-        className={`ml-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all text-white ${on?"bg-red-600 hover:bg-red-700":"bg-violet-600 hover:bg-violet-700"}`}>
-        {on?"⏹ Stop":"▶ Start"}
+      <button onClick={()=>setOn(v=>!v)} title={on?"Stop":"Start"}
+        className={`ml-0.5 sm:ml-1 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md sm:rounded-lg text-xs font-semibold transition-all text-white ${on?"bg-red-600 hover:bg-red-700":"bg-violet-600 hover:bg-violet-700"}`}>
+        {on?"⏹":"▶"}<span className="hidden sm:inline">{on?" Stop":" Start"}</span>
       </button>
     </div>
   );
@@ -1253,26 +1256,26 @@ function ChordButton({ song }) {
 
   if (state === "checking") {
     return (
-      <button disabled
-        className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-500 cursor-wait flex items-center gap-1.5">
+      <button disabled title="Checking chord sites…"
+        className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-500 cursor-wait flex items-center gap-1.5">
         <div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>
-        Finding chords…
+        <span className="hidden sm:inline">Finding chords…</span>
       </button>
     );
   }
   if (state === "missing") {
     return (
       <button disabled title="No chords found across Ultimate Guitar, Torrins, Genius"
-        className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2a2a3e] text-gray-700 opacity-50 cursor-not-allowed">
-        🎸 No chords found
+        className="text-xs px-2 py-1.5 rounded-lg border border-[#2a2a3e] text-gray-700 opacity-50 cursor-not-allowed">
+        🎸<span className="hidden sm:inline"> No chords</span>
       </button>
     );
   }
   return (
     <a href={result.url} target="_blank" rel="noopener"
       title={`Chords found on ${result.source}`}
-      className="text-xs px-2.5 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/50 text-amber-300 hover:bg-amber-600/30 transition-all font-medium">
-      🎸 Chords on {result.source} ↗
+      className="text-xs px-2 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/50 text-amber-300 hover:bg-amber-600/30 transition-all font-medium whitespace-nowrap">
+      🎸<span className="hidden sm:inline"> {result.source} ↗</span>
     </a>
   );
 }
@@ -1358,15 +1361,42 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
     <div className="flex h-full overflow-hidden">
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
 
-        {/* Header — compact, single-row title on mobile */}
-        <div className="px-4 sm:px-5 pt-3 sm:pt-4 pb-2 sm:pb-3 border-b border-[#1e1e2e] flex-shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <button onClick={onBack} title="Back" className="text-violet-400 hover:text-violet-300 text-sm sm:text-xs flex-shrink-0">←</button>
+        {/* Header — two compact rows on mobile, single row on desktop */}
+        <div className="px-3 sm:px-5 pt-2.5 sm:pt-4 pb-2 sm:pb-3 border-b border-[#1e1e2e] flex-shrink-0">
+          {/* Row 1: back + title (full width on mobile) */}
+          <div className="flex items-center gap-2 min-w-0">
+            <button onClick={onBack} title="Back"
+              className="text-violet-400 hover:text-violet-300 text-lg flex-shrink-0 px-1">←</button>
             <div className="flex-1 min-w-0">
-              <h1 className="text-base sm:text-xl font-bold text-white truncate">{song.title}</h1>
+              <h1 className="text-sm sm:text-xl font-bold text-white truncate leading-tight">{song.title}</h1>
               <div className="text-xs text-gray-500 truncate">🎤 {song.artist}</div>
             </div>
-            <div className="flex gap-1.5 flex-shrink-0">
+            {/* Desktop actions inline */}
+            {!isMobile && (
+              <div className="flex gap-1.5 flex-shrink-0">
+                <ChordButton song={song} />
+                <div className="relative">
+                  <button onClick={()=>setFolderMenu(v=>!v)}
+                    className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁 Add</button>
+                  {showFolderMenu && (
+                    <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
+                      {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
+                      {folders.map(f=>(
+                        <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setFolderMenu(false);}}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 first:rounded-t-xl last:rounded-b-xl transition-all">
+                          📁 {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Row 2 on mobile: action icons */}
+          {isMobile && (
+            <div className="flex gap-1.5 mt-2">
               <ChordButton song={song} />
               <div className="relative">
                 <button onClick={()=>setFolderMenu(v=>!v)}
@@ -1383,18 +1413,18 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                   </div>
                 )}
               </div>
-              {isMobile && hasQueue && (
+              {hasQueue && (
                 <button onClick={()=>setShowQueue(true)} title="Session queue"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all">
-                  ☰ {folderSongs.length}
+                  className="text-xs px-2 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all ml-auto">
+                  ☰ {folderSongs.length} in queue
                 </button>
               )}
             </div>
-          </div>
+          )}
         </div>
 
-        {/* Source bar — compact toolbar, full bar on desktop / inline icons on mobile */}
-        <div className="px-4 sm:px-5 py-1.5 sm:py-2 border-b border-[#1a1a2a] flex items-center gap-2 sm:gap-3 flex-shrink-0">
+        {/* Source bar — wraps onto a second row on mobile if needed */}
+        <div className="px-3 sm:px-5 py-1.5 sm:py-2 border-b border-[#1a1a2a] flex items-center flex-wrap gap-1.5 sm:gap-3 flex-shrink-0 overflow-x-hidden">
           {nativeScript && (
             <div className="script-toggle">
               <div onClick={()=>setScript("roman")} className={`script-opt ${script==="roman"?"active":""}`}>{isMobile?"Aa":"Romanized"}</div>
@@ -1563,20 +1593,16 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack}) {
           </div>
         )}
         {songs.map((song,i)=>(
-          <div key={song.id} className="flex items-center justify-between bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 hover:border-violet-500/40 transition-all">
-            <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={()=>onOpenSong(song)}>
-              <span className="text-xl font-bold text-violet-800 w-6">{i+1}</span>
-              <div className="min-w-0">
-                <div className="font-semibold text-white truncate">{song.title}</div>
-                <div className="text-xs text-gray-400">{song.artist||song.singer} · {song.language||"Unknown"}</div>
+          <div key={song.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-violet-500/40 transition-all min-w-0">
+            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
+              <span className="text-lg sm:text-xl font-bold text-violet-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-white truncate text-sm sm:text-base">{song.title}</div>
+                <div className="text-xs text-gray-400 truncate">{song.artist||song.singer}</div>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-              <span className={`text-xs px-2 py-0.5 rounded-full ${song.type==="curated"?"curated-badge":"live-badge"}`}>
-                {song.type==="curated"?"⭐":"🎵"}
-              </span>
-              <button onClick={()=>onRemove(folder.id,song.id)} className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
-            </div>
+            <button onClick={()=>onRemove(folder.id,song.id)}
+              className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all flex-shrink-0">✕</button>
           </div>
         ))}
       </div>
