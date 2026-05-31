@@ -28,6 +28,9 @@ jobs:
         run: npm install esbuild react react-dom --no-save
 
       - name: Build app
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           mkdir -p dist
           npx esbuild src/app.jsx \
@@ -37,6 +40,8 @@ jobs:
             --jsx=automatic \
             --jsx-import-source=react \
             --define:process.env.NODE_ENV='"production"' \
+            --define:process.env.SUPABASE_URL="\"${SUPABASE_URL}\"" \
+            --define:process.env.SUPABASE_KEY="\"${SUPABASE_KEY}\"" \
             --target=es2020 \
             --format=iife \
             --outfile=dist/app.js
@@ -44,7 +49,6 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload the entire repo so index.html + dist/app.js + assets are all served
           path: .
 
   deploy:
