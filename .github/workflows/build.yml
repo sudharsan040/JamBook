@@ -25,12 +25,22 @@ jobs:
           node-version: 20
 
       - name: Install deps
-        run: npm install esbuild react react-dom tailwindcss --no-save
+        run: |
+          npm install --silent esbuild react react-dom
+          npm install --silent tailwindcss@^3.4.0 @tailwindcss/cli@^3 || npm install --silent tailwindcss@^3.4.0
+          ls node_modules/.bin/ | grep -i tailwind || true
 
       - name: Build CSS (precompile Tailwind — only utilities actually used)
         run: |
           mkdir -p dist
-          npx tailwindcss -c tailwind.config.js -i src/styles.css -o dist/styles.css --minify
+          # Call the binary directly — bypass npx, which fails inconsistently in CI
+          node ./node_modules/tailwindcss/lib/cli.js \
+            -c tailwind.config.js \
+            -i src/styles.css \
+            -o dist/styles.css \
+            --minify
+          echo "--- dist/styles.css info ---"
+          wc -c dist/styles.css
 
       - name: Build app
         env:
