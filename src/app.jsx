@@ -1541,7 +1541,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [romanizing, setRomanizing] = React.useState(false);
   const scrollRef = React.useRef(null);
 
-  const hasCustomLyrics = !!song.customLyrics;
+  const hasCustomLyrics = !!(song.customLyrics || song.customLyricsRoman);
   const isCustomSong    = song.type === "custom";
 
   // Re-read cache + reset state whenever song.id changes.
@@ -1550,7 +1550,9 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   React.useEffect(() => {
     setGoogleRoman(null); setRomanizing(false);
     if (hasCustomLyrics) {
-      setLyricsData({ lyrics: song.customLyrics, source: isCustomSong ? "your lyrics" : "your edit" });
+      // Use native if provided, else fall back to the roman version as the "source" text.
+      const baseText = song.customLyrics || song.customLyricsRoman || "";
+      setLyricsData({ lyrics: baseText, source: isCustomSong ? "your lyrics" : "your edit" });
       setLoading(false); setNotFound(false); setWasCached(true);
       return;
     }
@@ -1599,12 +1601,18 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const displayText = React.useMemo(() => {
     if (!lyricsData?.lyrics) return null;
     if (preRomanized) return lyricsData.lyrics;
-    if (script === "roman" && nativeScript) {
+
+    if (script === "roman") {
+      // 1. User's own Tanglish edit always wins
+      if (song.customLyricsRoman) return song.customLyricsRoman;
+      // 2. If lyrics are already in roman (no Indic script detected), just show them
+      if (!nativeScript) return lyricsData.lyrics;
+      // 3. Otherwise: rule-based fallback or Google's romanization
       if (preferLocal || !googleRoman) return transliterateLocal(lyricsData.lyrics);
       return googleRoman;
     }
-    return lyricsData.lyrics;
-  }, [lyricsData, script, nativeScript, preRomanized, googleRoman, preferLocal]);
+    return lyricsData.lyrics; // native mode
+  }, [lyricsData, script, nativeScript, preRomanized, googleRoman, preferLocal, song.customLyricsRoman]);
 
   const stanzas = displayText ? parseStructured(displayText) : [];
 
@@ -1631,7 +1639,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             {!isMobile && (
               <div className="flex gap-1.5 flex-shrink-0">
                 {!isCustomSong && <ChordButton song={song} />}
-                {activeFolder && onEditSong && (
+                {onEditSong && (
                   <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")} title="Edit lyrics for this song (your account only)"
                     className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">
                     ✎ Edit
@@ -1660,7 +1668,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {isMobile && (
             <div className="flex gap-1.5 mt-2">
               {!isCustomSong && <ChordButton song={song} />}
-              {activeFolder && onEditSong && (
+              {onEditSong && (
                 <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")} title="Edit lyrics"
                   className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">✎</button>
               )}
@@ -1852,30 +1860,43 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
 // ─── Folder View ──────────────────────────────────────────────────────
 // ─── Lyrics Editor Modal ─────────────────────────────────────────────
-// Handles "add new custom song" and "edit existing song's lyrics".
-// If folderId is null (added from home page), shows a folder picker so user
-// can choose which folder to save the song to.
+// Lets users edit BOTH the native-script version and the Tanglish version
+// independently. Tab switcher above the textarea controls which one is shown.
 function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsFolderPick }) {
   const isEdit = mode === "edit";
   const [title,    setTitle]    = React.useState(initialSong?.title    || "");
   const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
   const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
   const [language, setLanguage] = React.useState(initialSong?.language || "Tamil");
-  const [lyrics,   setLyrics]   = React.useState(initialSong?.customLyrics || initialSong?.lyrics || "");
+  const [nativeLyrics,   setNativeLyrics]   = React.useState(initialSong?.customLyrics || "");
+  const [romanLyrics,    setRomanLyrics]    = React.useState(initialSong?.customLyricsRoman || "");
+  const [scriptTab, setScriptTab] = React.useState(
+    initialSong?.customLyrics ? "native" : (initialSong?.customLyricsRoman ? "roman" : "native")
+  );
   const [pickedFolderId, setPickedFolderId] = React.useState(
     needsFolderPick && folders && folders.length > 0 ? folders[0].id : null
   );
   const [err, setErr] = React.useState("");
   const lyricsRef = React.useRef(null);
 
+  const currentLyrics    = scriptTab === "native" ? nativeLyrics    : romanLyrics;
+  const setCurrentLyrics = scriptTab === "native" ? setNativeLyrics : setRomanLyrics;
+
+  // Generate Tanglish from native using built-in mapper (one-click helper)
+  const autoFillTanglish = () => {
+    if (!nativeLyrics.trim()) return;
+    const out = transliterateLocal(nativeLyrics);
+    setRomanLyrics(out);
+    setScriptTab("roman");
+  };
+
   const insertAtCursor = (snippet) => {
     const el = lyricsRef.current; if (!el) return;
     const start = el.selectionStart, end = el.selectionEnd;
-    const before = lyrics.slice(0, start), after = lyrics.slice(end);
+    const before = currentLyrics.slice(0, start), after = currentLyrics.slice(end);
     const sep = (before && !before.endsWith("\n")) ? "\n" : "";
     const next = before + sep + snippet + "\n" + after;
-    setLyrics(next);
-    // Move cursor after the inserted text
+    setCurrentLyrics(next);
     setTimeout(() => {
       const pos = (before + sep + snippet + "\n").length;
       el.focus(); el.setSelectionRange(pos, pos);
@@ -1884,16 +1905,17 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
 
   const save = () => {
     setErr("");
-    if (!title.trim())  { setErr("Title is required."); return; }
-    if (!lyrics.trim()) { setErr("Lyrics can't be empty."); return; }
-    if (needsFolderPick && !pickedFolderId) { setErr("Pick a folder to save into."); return; }
+    if (!title.trim())                                 { setErr("Title is required."); return; }
+    if (!nativeLyrics.trim() && !romanLyrics.trim())   { setErr("Add lyrics in at least one script."); return; }
+    if (needsFolderPick && !pickedFolderId)            { setErr("Pick a folder to save into."); return; }
     onSave({
-      title:        title.trim(),
-      artist:       artist.trim() || "Unknown",
-      album:        album.trim()  || "",
-      language:     language,
-      customLyrics: lyrics,
-      folderId:     pickedFolderId, // null when adding from inside a folder
+      title:              title.trim(),
+      artist:             artist.trim() || "Unknown",
+      album:              album.trim()  || "",
+      language:           language,
+      customLyrics:       nativeLyrics,
+      customLyricsRoman:  romanLyrics,
+      folderId:           pickedFolderId,
     });
   };
 
@@ -1957,12 +1979,40 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
           </div>
 
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Lyrics <span className="text-red-400">*</span></label>
-            <textarea ref={lyricsRef} value={lyrics} onChange={e=>setLyrics(e.target.value)}
+            <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+              <label className="text-xs text-gray-400 font-medium">
+                Lyrics <span className="text-red-400">*</span>
+                <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>
+              </label>
+              <div className="flex items-center gap-2">
+                {scriptTab === "roman" && nativeLyrics.trim() && (
+                  <button type="button" onClick={autoFillTanglish}
+                    title="Auto-fill from native lyrics using the built-in transliterator"
+                    className="text-xs text-violet-400 hover:text-violet-300 underline-offset-2 hover:underline">
+                    ↻ Auto-fill
+                  </button>
+                )}
+                <div className="script-toggle">
+                  <div onClick={()=>setScriptTab("native")}
+                    className={`script-opt ${scriptTab==="native"?"active":""}`}>
+                    Native {nativeLyrics.trim() && <span className="text-green-400 ml-0.5">●</span>}
+                  </div>
+                  <div onClick={()=>setScriptTab("roman")}
+                    className={`script-opt ${scriptTab==="roman"?"active":""}`}>
+                    Tanglish {romanLyrics.trim() && <span className="text-green-400 ml-0.5">●</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <textarea ref={lyricsRef} value={currentLyrics} onChange={e=>setCurrentLyrics(e.target.value)}
               rows={12}
               className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 font-mono leading-relaxed resize-y"
-              placeholder={`Paste your lyrics here...\n\nTip:\n[Chorus]   ← marks a section\n[Male]     ← Male singer\nC  G  Am   ← chord line (letters only)\n\nThen put the lyric lines.`} />
-            <p className="text-xs text-gray-600 mt-1">Markers like <code className="text-violet-400">[Chorus]</code> or <code className="text-violet-400">[Male]</code> add vocal tags. Lines with only chord letters (e.g. <code className="text-violet-400">C G Am F</code>) render as chord rows.</p>
+              placeholder={scriptTab === "native"
+                ? `Paste native-script lyrics here...\n\nTip:\n[Chorus]   ← marks a section\n[Male]     ← Male singer\nC  G  Am   ← chord line`
+                : `Paste Tanglish / Roman lyrics here...\n\nUse the ↻ Auto-fill button to convert from native automatically.`} />
+            <p className="text-xs text-gray-600 mt-1">
+              You can fill either or both. Markers like <code className="text-violet-400">[Chorus]</code> add vocal tags. Lines with only chord letters (<code className="text-violet-400">C G Am F</code>) render as chord rows.
+            </p>
           </div>
 
           {err && <p className="text-red-400 text-xs">{err}</p>}
@@ -2540,22 +2590,24 @@ function App() {
     // folderId may be null when invoked from home page → modal will show picker
     setEditorState({ mode: "new", folderId });
   };
-  // Edit handler — prefills the editor with whichever lyrics are most useful:
-  //   1) prior user edits (song.customLyrics)
-  //   2) whatever the song view is currently showing (passed in)
-  //   3) the cached native-script lyrics from the API
-  // …so the user always opens the editor with content to tweak, not a blank box.
+  // Edit handler — prefills BOTH the native and roman textareas so the user
+  // doesn't have to start from scratch in either script.
   const openEditSong = (folderId, song, providedLyrics) => {
-    let initialLyrics = song.customLyrics || "";
-    if (!initialLyrics && providedLyrics) initialLyrics = providedLyrics;
-    if (!initialLyrics) {
-      const cached = getCachedLyrics(song.id);
-      initialLyrics = cached?.lyrics || "";
-    }
+    const cached = getCachedLyrics(song.id);
+    // Native-script source candidates, in priority order
+    let nativeFill = song.customLyrics || "";
+    if (!nativeFill && providedLyrics && detectScript(providedLyrics)) nativeFill = providedLyrics;
+    if (!nativeFill && cached?.lyrics && detectScript(cached.lyrics))   nativeFill = cached.lyrics;
+
+    // Romanised source candidates
+    let romanFill = song.customLyricsRoman || "";
+    if (!romanFill && providedLyrics && !detectScript(providedLyrics))  romanFill = providedLyrics;
+    if (!romanFill && cached?.googleRoman)                              romanFill = cached.googleRoman;
+
     setEditorState({
       mode: "edit",
       folderId,
-      song: { ...song, customLyrics: initialLyrics },
+      song: { ...song, customLyrics: nativeFill, customLyricsRoman: romanFill },
     });
   };
 
@@ -2568,33 +2620,43 @@ function App() {
     const folder = folders.find(f => f.id === folderId);
     if (!folder) { setEditorState(null); return; }
 
+    // Common patch object the modal produced
+    const patch = {
+      title: data.title, artist: data.artist, album: data.album,
+      language: data.language,
+      customLyrics:      data.customLyrics,
+      customLyricsRoman: data.customLyricsRoman,
+    };
+
+    const existingIndex = song ? folder.songs.findIndex(s => s.id === song.id) : -1;
     let updated;
-    if (mode === "new") {
-      const newSong = {
-        id:           "cs_" + (window.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(36).slice(2,8))),
-        type:         "custom",
-        title:        data.title,
-        artist:       data.artist,
-        album:        data.album,
-        language:     data.language,
-        customLyrics: data.customLyrics,
-      };
-      updated = { ...folder, songs: [...folder.songs, newSong] };
-      showToast(`Added "${data.title}"`);
-    } else {
-      // Edit existing — overwrite that song's fields (title/artist editable too)
+
+    if (mode === "edit" && existingIndex >= 0) {
+      // True edit of a song already in this folder — overwrite fields
       updated = {
         ...folder,
-        songs: folder.songs.map(s => s.id === song.id
-          ? { ...s, title: data.title, artist: data.artist, album: data.album, language: data.language, customLyrics: data.customLyrics }
-          : s),
+        songs: folder.songs.map(s => s.id === song.id ? { ...s, ...patch } : s),
       };
-      // If the active song is this one, refresh its in-memory copy so the editor reflects immediately
       if (activeSong && activeSong.id === song.id) {
-        setActiveSong({ ...activeSong, title: data.title, artist: data.artist, album: data.album, language: data.language, customLyrics: data.customLyrics });
+        setActiveSong({ ...activeSong, ...patch });
       }
       showToast(`Lyrics saved`);
+    } else {
+      // "new" mode OR "edit" of a song that isn't in this folder yet → add it
+      const baseSong = song && mode === "edit"
+        ? { ...song, ...patch }   // editing a song from search → keep its iTunes id/cover
+        : {
+            id:   "cs_" + (window.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(36).slice(2,8))),
+            type: "custom",
+            ...patch,
+          };
+      updated = { ...folder, songs: [...folder.songs, baseSong] };
+      if (activeSong && song && activeSong.id === song.id) {
+        setActiveSong({ ...activeSong, ...patch });
+      }
+      showToast(`Saved "${data.title}" to ${folder.name}`);
     }
+
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
     await db.updateFolder(user, updated);
     setEditorState(null);
@@ -2666,7 +2728,7 @@ function App() {
             song={activeSong} onBack={()=>setView("search")} folders={folders} onAddToFolder={addToFolder}
             activeFolder={activeFolder} folderSongs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolderId)}
-            onEditSong={activeFolder ? (s, currentLyrics)=>openEditSong(activeFolder.id, s, currentLyrics) : null}
+            onEditSong={(s, currentLyrics)=>openEditSong(activeFolderId, s, currentLyrics)}
           />
         )}
         {view==="folder"&&activeFolder&&(
@@ -2688,7 +2750,7 @@ function App() {
           onSave={saveLyricsEdit}
           onClose={()=>setEditorState(null)}
           folders={folders}
-          needsFolderPick={editorState.mode === "new" && !editorState.folderId}
+          needsFolderPick={!editorState.folderId}
         />
       )}
 
