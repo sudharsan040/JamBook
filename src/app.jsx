@@ -1632,7 +1632,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <div className="flex gap-1.5 flex-shrink-0">
                 {!isCustomSong && <ChordButton song={song} />}
                 {activeFolder && onEditSong && (
-                  <button onClick={()=>onEditSong(song)} title="Edit lyrics for this song (your account only)"
+                  <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")} title="Edit lyrics for this song (your account only)"
                     className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">
                     ✎ Edit
                   </button>
@@ -1661,7 +1661,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <div className="flex gap-1.5 mt-2">
               {!isCustomSong && <ChordButton song={song} />}
               {activeFolder && onEditSong && (
-                <button onClick={()=>onEditSong(song)} title="Edit lyrics"
+                <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")} title="Edit lyrics"
                   className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">✎</button>
               )}
               <div className="relative">
@@ -1852,16 +1852,19 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
 // ─── Folder View ──────────────────────────────────────────────────────
 // ─── Lyrics Editor Modal ─────────────────────────────────────────────
-// Handles both "add new custom song" and "edit existing song's lyrics".
-// `initialSong` shape: { id?, title, artist, album, language, lyrics }
-// Returns updated song via onSave(songData).
-function LyricsEditorModal({ initialSong, mode, onSave, onClose }) {
+// Handles "add new custom song" and "edit existing song's lyrics".
+// If folderId is null (added from home page), shows a folder picker so user
+// can choose which folder to save the song to.
+function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsFolderPick }) {
   const isEdit = mode === "edit";
   const [title,    setTitle]    = React.useState(initialSong?.title    || "");
   const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
   const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
   const [language, setLanguage] = React.useState(initialSong?.language || "Tamil");
   const [lyrics,   setLyrics]   = React.useState(initialSong?.customLyrics || initialSong?.lyrics || "");
+  const [pickedFolderId, setPickedFolderId] = React.useState(
+    needsFolderPick && folders && folders.length > 0 ? folders[0].id : null
+  );
   const [err, setErr] = React.useState("");
   const lyricsRef = React.useRef(null);
 
@@ -1883,12 +1886,14 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose }) {
     setErr("");
     if (!title.trim())  { setErr("Title is required."); return; }
     if (!lyrics.trim()) { setErr("Lyrics can't be empty."); return; }
+    if (needsFolderPick && !pickedFolderId) { setErr("Pick a folder to save into."); return; }
     onSave({
       title:        title.trim(),
       artist:       artist.trim() || "Unknown",
       album:        album.trim()  || "",
       language:     language,
       customLyrics: lyrics,
+      folderId:     pickedFolderId, // null when adding from inside a folder
     });
   };
 
@@ -1921,12 +1926,23 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose }) {
                 placeholder="Optional" />
             </div>
           </div>
-          <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Language</label>
-            <select value={language} onChange={e=>setLanguage(e.target.value)}
-              className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
-              {LANGUAGES.filter(l => l !== "All").map(l => <option key={l} value={l}>{l}</option>)}
-            </select>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-gray-400 font-medium mb-1 block">Language</label>
+              <select value={language} onChange={e=>setLanguage(e.target.value)}
+                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
+                {LANGUAGES.filter(l => l !== "All").map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+            {needsFolderPick && (
+              <div>
+                <label className="text-xs text-gray-400 font-medium mb-1 block">Save to folder <span className="text-red-400">*</span></label>
+                <select value={pickedFolderId || ""} onChange={e=>setPickedFolderId(e.target.value)}
+                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
+                  {(folders || []).map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Vocal/chord toolbar */}
@@ -2012,7 +2028,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 }
 
 // ─── Search Page ──────────────────────────────────────────────────────
-function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout}) {
+function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics}) {
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
@@ -2298,6 +2314,16 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                   </div>
                 </div>
               )}
+
+              {/* Add your own lyrics card */}
+              {folders.length > 0 && (
+                <div onClick={onAddCustomLyrics}
+                  className="bg-[#0d0d18] border-2 border-dashed border-amber-700/40 hover:border-amber-500 hover:bg-amber-600/5 rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px]">
+                  <div className="text-4xl text-amber-500 mb-2">🎵</div>
+                  <div className="text-sm font-semibold text-amber-400">Add Lyrics</div>
+                  <div className="text-xs text-gray-600 mt-1">Paste your own song</div>
+                </div>
+              )}
             </div>
 
             {/* Helpful empty hint when no folders at all */}
@@ -2511,16 +2537,34 @@ function App() {
   const [editorState, setEditorState] = React.useState(null);
 
   const openAddCustom = (folderId) => {
+    // folderId may be null when invoked from home page → modal will show picker
     setEditorState({ mode: "new", folderId });
   };
-  const openEditSong = (folderId, song) => {
-    setEditorState({ mode: "edit", folderId, song });
+  // Edit handler — prefills the editor with whichever lyrics are most useful:
+  //   1) prior user edits (song.customLyrics)
+  //   2) whatever the song view is currently showing (passed in)
+  //   3) the cached native-script lyrics from the API
+  // …so the user always opens the editor with content to tweak, not a blank box.
+  const openEditSong = (folderId, song, providedLyrics) => {
+    let initialLyrics = song.customLyrics || "";
+    if (!initialLyrics && providedLyrics) initialLyrics = providedLyrics;
+    if (!initialLyrics) {
+      const cached = getCachedLyrics(song.id);
+      initialLyrics = cached?.lyrics || "";
+    }
+    setEditorState({
+      mode: "edit",
+      folderId,
+      song: { ...song, customLyrics: initialLyrics },
+    });
   };
 
   // Save handler — covers both new-custom and edit-existing
   const saveLyricsEdit = async (data) => {
     if (!editorState) return;
-    const { mode, folderId, song } = editorState;
+    const { mode, song } = editorState;
+    // Resolve folder: explicit prop, or fall back to picker selection from modal
+    const folderId = editorState.folderId || data.folderId;
     const folder = folders.find(f => f.id === folderId);
     if (!folder) { setEditorState(null); return; }
 
@@ -2609,7 +2653,7 @@ function App() {
       )}
       <main className="flex-1 overflow-hidden flex flex-col min-w-0">
         {view==="search"&&(
-          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout}/>
+          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)}/>
         )}
         {view==="song"&&activeSong&&activeSong.type==="curated"&&(
           <CuratedSongView
@@ -2622,7 +2666,7 @@ function App() {
             song={activeSong} onBack={()=>setView("search")} folders={folders} onAddToFolder={addToFolder}
             activeFolder={activeFolder} folderSongs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolderId)}
-            onEditSong={activeFolder ? (s)=>openEditSong(activeFolder.id, s) : null}
+            onEditSong={activeFolder ? (s, currentLyrics)=>openEditSong(activeFolder.id, s, currentLyrics) : null}
           />
         )}
         {view==="folder"&&activeFolder&&(
@@ -2643,6 +2687,8 @@ function App() {
           initialSong={editorState.song || null}
           onSave={saveLyricsEdit}
           onClose={()=>setEditorState(null)}
+          folders={folders}
+          needsFolderPick={editorState.mode === "new" && !editorState.folderId}
         />
       )}
 
