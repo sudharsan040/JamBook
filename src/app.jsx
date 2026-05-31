@@ -712,24 +712,40 @@ async function fetchFromChartLyrics(artist, title) {
   return { lyrics: l, source: "ChartLyrics" };
 }
 
-// Race all sources simultaneously — first with real lyrics wins
+// Hard cap each source so a slow / dead server never holds up the page.
+// Mobile networks can stall any individual TLS handshake for 10+ seconds —
+// without this, the user feels everything is slow even though Promise.any
+// has already won.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timeout ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+// Race all sources simultaneously — first with real lyrics wins.
+// tamil2lyrics goes through a CORS proxy (~2 round trips) so gets a longer cap.
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
+  const T_DIRECT = 4500;  // direct APIs
+  const T_PROXY  = 7000;  // CORS-proxy-backed sources
   try {
     return await Promise.any([
-      fetchFromTamil2Lyrics(artist, norm),
-      fetchFromLrclib(artist, norm),
-      fetchFromOvh(artist, norm),
-      fetchFromSRA(artist, norm),
-      fetchFromChartLyrics(artist, norm),
+      withTimeout(fetchFromTamil2Lyrics(artist, norm), T_PROXY,  "tamil2lyrics"),
+      withTimeout(fetchFromLrclib      (artist, norm), T_DIRECT, "lrclib"),
+      withTimeout(fetchFromOvh         (artist, norm), T_DIRECT, "ovh"),
+      withTimeout(fetchFromSRA         (artist, norm), T_DIRECT, "sra"),
+      withTimeout(fetchFromChartLyrics (artist, norm), T_DIRECT, "chartlyrics"),
     ]);
   } catch {
-    // Last resort: retry with title only (no artist) — helps regional songs
+    // Last resort: retry with title only (helps regional songs)
     try {
       return await Promise.any([
-        fetchFromTamil2Lyrics("", norm),
-        fetchFromLrclib("", norm),
-        fetchFromSRA("", norm),
+        withTimeout(fetchFromLrclib("", norm), T_DIRECT, "lrclib-2"),
+        withTimeout(fetchFromSRA   ("", norm), T_DIRECT, "sra-2"),
+        withTimeout(fetchFromTamil2Lyrics("", norm), T_PROXY, "tamil2lyrics-2"),
       ]);
     } catch { return null; }
   }
@@ -1770,7 +1786,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {loading && (
             <div className="space-y-3">
               <Spinner/>
-              <p className="text-center text-xs text-gray-600">Checking tamil2lyrics, lrclib, lyrics.ovh, some-random-api, ChartLyrics simultaneously…</p>
+              <p className="text-center text-xs text-gray-600">Racing 5 lyric sources in parallel — fastest wins (max ~5s)</p>
             </div>
           )}
           {!loading && notFound && (
