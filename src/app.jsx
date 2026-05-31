@@ -14,8 +14,8 @@ const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc262
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
 // Paste your project URL + anon key from Supabase → Settings → API.
 // If left blank the app falls back to localStorage (single-device).
-const SUPABASE_URL = "https://ztgntzelqnosogkzarjw.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0Z250emVscW5vc29na3phcmp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTIxNDAsImV4cCI6MjA5NTYyODE0MH0.WG9ozARaBQuFbmljKs7dRSd9iuyXOBPjt9vP887M6GA";
+const SUPABASE_URL = "";
+const SUPABASE_KEY = "";
 
 const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
