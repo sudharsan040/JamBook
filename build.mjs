@@ -10,8 +10,8 @@ await esbuild.build({
   jsxImportSource: "react",
   define: {
     "process.env.NODE_ENV":     JSON.stringify("production"),
-    "process.env.SUPABASE_URL": JSON.stringify(process.env.SUPABASE_URL || "https://ztgntzelqnosogkzarjw.supabase.co"),
-    "process.env.SUPABASE_KEY": JSON.stringify(process.env.SUPABASE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0Z250emVscW5vc29na3phcmp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTIxNDAsImV4cCI6MjA5NTYyODE0MH0.WG9ozARaBQuFbmljKs7dRSd9iuyXOBPjt9vP887M6GA"),
+    "process.env.SUPABASE_URL": JSON.stringify(process.env.SUPABASE_URL || ""),
+    "process.env.SUPABASE_KEY": JSON.stringify(process.env.SUPABASE_KEY || ""),
   },
   target:   "es2020",
   format:   "iife",
