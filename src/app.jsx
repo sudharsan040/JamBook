@@ -1962,6 +1962,7 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
 
 // ─── App Root ─────────────────────────────────────────────────────────
 function App() {
+  // ─── ALL HOOKS MUST BE DECLARED HERE, BEFORE ANY CONDITIONAL RETURNS ───
   const [user, setUser]                    = React.useState(null);
   const [bootLoading, setBootLoading]      = React.useState(true);
   const [view,setView]                     = React.useState("search");
@@ -1971,6 +1972,7 @@ function App() {
   const [folders,setFolders]               = React.useState([]);
   const [shareTarget,setShareTarget]       = React.useState(null);
   const [showImport,setShowImport]         = React.useState(false);
+  const isMobile                           = useIsMobile();
   const [pendingShare,setPendingShare]     = React.useState(null);
   const [toast,showToast]                  = useToast();
 
@@ -2089,7 +2091,6 @@ function App() {
   if (!user) return <AuthPage onLogin={setUser}/>;
 
   // Sidebar is hidden on the home/search view, and entirely on mobile
-  const isMobile = useIsMobile();
   const showSidebar = view !== "search" && !isMobile;
 
   return (
