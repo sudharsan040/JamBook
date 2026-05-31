@@ -227,11 +227,226 @@ function tamilToTanglish(text) {
   return out;
 }
 
+// ── English loanwords commonly written in Tamil script ───────────────
+// Format: each entry is [englishSpelling, [phoneticVariants...]]
+// Built broad — covers ~200 common loanwords across vehicles, tech,
+// clothing, food, places, emotions, body parts, time, work, etc.
+const LOANWORD_ENTRIES = [
+  // vehicles
+  ['cycle',['saikkil','saikil','saikkilu','saikkilae']],
+  ['motor',['mottar','mottaar','moattar']],
+  ['bike',['paik','baik','paikku']],
+  ['car',['kaar','kaaru','car']],
+  ['bus',['bas','bus','basu']],
+  ['train',['train','rayil','reyil','trayinu']],
+  ['plane',['plain','plaen']],
+  ['aeroplane',['aeroplain','aeroplane','aeroplaen']],
+  ['taxi',['taeksi','taksi']],
+  ['auto',['oato','aato','aotto']],
+  ['lorry',['lorri','laari']],
+  ['truck',['trak','truk']],
+  ['scooter',['skoottar','skutar','skoottare']],
+  ['ship',['ship','shippu']],
+  ['boat',['boat','bottu']],
+  ['Maruti',['maaruthi','maaruti']],
+  // tech / media
+  ['phone',['phon','foan','phonu','foanu']],
+  ['mobile',['mobail','moabail','mobailu']],
+  ['camera',['kamera','kaamera','kaameraa']],
+  ['computer',['kampyuter','komputer','kambyuttar']],
+  ['laptop',['laeptop','laaptop','laeptaap']],
+  ['TV',['tivi','teevee','teevi']],
+  ['radio',['redio','reediyo','reedio']],
+  ['internet',['intternet','intarnet']],
+  ['online',['onlain','aanlain']],
+  ['app',['aep','app']],
+  ['video',['vidiyo','viideeyo','vidyo']],
+  ['photo',['pottoa','footoa','poto']],
+  ['message',['masej','messej','messaej']],
+  ['email',['imel','eemail']],
+  ['film',['film','filim','film']],
+  ['cinema',['cinema','kinema','sinema']],
+  ['record',['rekord','rekkard']],
+  ['song',['sangu','song']],
+  ['music',['myoosik','musik']],
+  ['mike',['maik','maiku']],
+  // clothing
+  ['pant',['paent','paentu','paant']],
+  ['pants',['paents','paentus']],
+  ['baggy',['paeki','baeki']],
+  ['jeans',['jeens','jins','jeansu']],
+  ['shirt',['shert','sheert','shartu']],
+  ['t-shirt',['ti-shert','tishert']],
+  ['coat',['koat','kottu']],
+  ['suit',['soot','suttu']],
+  ['tie',['tai']],
+  ['shoes',['shoes','shoosu','soosu']],
+  ['boots',['boots','bootsu','boottu']],
+  ['sandal',['saendal','sandal']],
+  ['cap',['kaep']],
+  ['hat',['haet']],
+  ['belt',['belt','beltu']],
+  ['dress',['dres','dressu']],
+  ['skirt',['skart','skartu']],
+  ['saree',['sari','saaree']],
+  // places
+  ['school',['skool','iskool','school']],
+  ['college',['kalej','kaalej','collage','kollej']],
+  ['office',['aafis','ofis','office','aafisu']],
+  ['hospital',['aaspataal','aspathri','hospital']],
+  ['hotel',['hoatel','hotel','hoattal']],
+  ['restaurant',['restorant','restaurant']],
+  ['bar',['baar','bar']],
+  ['shop',['shap','shaap','shop']],
+  ['market',['markat','maarket']],
+  ['mall',['maal','mall']],
+  ['park',['paark','park']],
+  ['beach',['beech','bich']],
+  ['station',['steshan','sttaeshan']],
+  ['airport',['erport','aerport']],
+  ['theatre',['theyater','thieater','tiyetar']],
+  ['library',['laibrary','laibrari']],
+  ['bank',['baengk','bank']],
+  ['city',['siti','city']],
+  ['village',['vilej','village']],
+  // food / drink
+  ['coffee',['kafi','kaafi','kappi']],
+  ['tea',['tee','tea']],
+  ['milk',['milku','milkku']],
+  ['water',['vaattar','vottar']],
+  ['juice',['joos','joosu','joosi']],
+  ['bread',['bred','brett']],
+  ['butter',['battar','buttar']],
+  ['cake',['keak','kaek']],
+  ['biscuit',['biskut','biskett']],
+  ['chocolate',['saaklet','chokolet','saakelet']],
+  ['pizza',['pisa','pizza']],
+  ['burger',['bargar','burgar']],
+  ['sandwich',['saendvic','saendvich']],
+  ['ice cream',['ais kreem','aiskreem']],
+  ['sugar',['shukkar','sugar','shukkur']],
+  // people / relations
+  ['doctor',['daaktar','doctor','daktor']],
+  ['master',['maastar','master']],
+  ['sir',['sar','sir']],
+  ['madam',['maedam','madam']],
+  ['friend',['frend','frenddu']],
+  ['brother',['bradar','brother']],
+  ['sister',['sistar','sister']],
+  ['uncle',['ankil','ungkil']],
+  ['aunty',['aenti','aanti']],
+  ['baby',['bebi','baeby']],
+  ['lover',['lavar','lover']],
+  // emotions / actions / interjections
+  ['love',['laaf','lavu','lof','lov']],
+  ['kiss',['kis','kissu']],
+  ['hug',['hag','hagg']],
+  ['smile',['smail','smaail']],
+  ['miss',['mis','missu']],
+  ['hi',['hai','hai']],
+  ['hello',['hellow','helow','hellaa']],
+  ['bye',['baai','baay','bai']],
+  ['thank you',['thaengyu','thangyu','thaenkyu']],
+  ['sorry',['sori','saari']],
+  ['please',['plees','pleesu']],
+  ['ok',['oake','okay']],
+  ['party',['paarti','party']],
+  ['dance',['daens','daans']],
+  ['style',['stail','staail']],
+  ['super',['super','soopar']],
+  // sports / entertainment
+  ['cricket',['krikket','kriket']],
+  ['football',['futbaal','futball']],
+  ['ball',['baal','ball']],
+  ['game',['gem','geem']],
+  ['movie',['moovi','muvi']],
+  // body
+  ['eye',['ai']],
+  ['lip',['lip','lippu']],
+  ['hand',['haendu','hand']],
+  ['leg',['leg','leggu']],
+  ['heart',['haart','hartu']],
+  ['face',['feys','feis']],
+  ['body',['bodi','bady']],
+  ['hair',['her','hair']],
+  // money / work
+  ['money',['manni','mani','money']],
+  ['rupee',['roopay','roobaai']],
+  ['dollar',['daalar','dollaar']],
+  ['salary',['salari','saelari']],
+  ['job',['jaab','jaabu']],
+  ['work',['vark','work']],
+  ['business',['bisnas','bizines']],
+  ['boss',['baas','baasu']],
+  ['company',['kampani','kompani']],
+  // time / quantity
+  ['time',['taim','taymu']],
+  ['day',['de','day']],
+  ['night',['nait','naytu']],
+  ['week',['veek','week']],
+  ['month',['mant','manttu']],
+  ['year',['iyar','year']],
+  ['number',['nambar','number']],
+  // misc household / objects
+  ['ticket',['tikket','tikkat']],
+  ['key',['kee','key']],
+  ['watch',['vaach','vaach']],
+  ['book',['buk','book']],
+  ['paper',['peppar','papar']],
+  ['pen',['pen','pennu']],
+  ['glass',['glaas','klaas']],
+  ['table',['taebil','teabil']],
+  ['chair',['saer','chair']],
+  ['bed',['bed','bedu']],
+  ['light',['lait','laitu']],
+  ['bag',['paeg','baeg','baggu']],
+  ['box',['baaks','box']],
+  ['news',['nyoos','noos']],
+  ['address',['adres','adress']],
+  ['name',['nem','neem']],
+  ['ID',['ai-di','aidee']],
+  ['photo',['poto','footo']],
+  ['color',['kalar','kular','colour']],
+];
+
+// Flatten into a fast lookup map: phoneticVariant → englishWord
+const LOANWORD_MAP = {};
+for (const [eng, variants] of LOANWORD_ENTRIES) {
+  for (const v of variants) LOANWORD_MAP[v.toLowerCase()] = eng;
+  LOANWORD_MAP[eng.toLowerCase()] = eng; // English form itself maps to canonical
+}
+const LOANWORD_KEYS_SORTED = Object.keys(LOANWORD_MAP).sort((a,b) => b.length - a.length);
+
+// Common Tamil case-ending suffixes that may stick on loanword stems.
+const CASE_SUFFIX = /^(s|ai|ae|aae|le|lae|ile|ilae|kku|kkae|odu|udan|aal|aalu|aalum|um|aa|ku|in|inu|leyo|loa|laam|kal|kale|kkaaga|kkaa|aa|um|aam|oda)$/i;
+
+function applyLoanwords(text) {
+  if (!text) return text;
+  // Split on word boundaries while preserving separators
+  return text.split(/(\b)/).map(token => {
+    if (!/[a-z]/i.test(token)) return token;
+    const lower = token.toLowerCase();
+    // Exact match first
+    if (LOANWORD_MAP[lower]) return LOANWORD_MAP[lower];
+    // Prefix + Tamil case suffix
+    for (const k of LOANWORD_KEYS_SORTED) {
+      if (lower.length <= k.length) continue;
+      if (lower.startsWith(k)) {
+        const suffix = lower.slice(k.length);
+        if (CASE_SUFFIX.test(suffix)) {
+          return LOANWORD_MAP[k] + suffix;
+        }
+      }
+    }
+    return token;
+  }).join("");
+}
+
 // ── Local (instant) fallback: rule-based transliteration ─────────────
 function transliterateLocal(text) {
   const script = detectScript(text);
   if (!script) return text;
-  if (script === "tamil") return tamilToTanglish(text);
+  if (script === "tamil") return applyLoanwords(tamilToTanglish(text));
   return text; // other scripts pass through until Google romanizes them
 }
 
@@ -288,7 +503,9 @@ async function googleRomanize(text) {
       const r = await googleRomanizeChunk(chunk, sl);
       out.push(r);
     }
-    return out.join("\n");
+    // Apply loanword post-processing — turns "saikkil/mottar/paent" → "cycle/motor/pant"
+    const joined = out.join("\n");
+    return script === "tamil" ? applyLoanwords(joined) : joined;
   } catch { return null; }
 }
 
