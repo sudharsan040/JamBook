@@ -25,14 +25,18 @@ jobs:
           node-version: 20
 
       - name: Install deps
-        run: npm install esbuild react react-dom --no-save
+        run: npm install esbuild react react-dom tailwindcss --no-save
+
+      - name: Build CSS (precompile Tailwind — only utilities actually used)
+        run: |
+          mkdir -p dist
+          npx tailwindcss -c tailwind.config.js -i src/styles.css -o dist/styles.css --minify
 
       - name: Build app
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          mkdir -p dist
           node build.mjs
 
       - name: Upload Pages artifact
