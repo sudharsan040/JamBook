@@ -199,8 +199,30 @@ function tamilToTanglish(text) {
   // Post-cleanup: tidy artefacts
   out = out
     .replace(/aa+/g, "aa")              // collapse triple+ vowels
-    .replace(/\bnga/g, "nga")
-    .replace(/(\w)\1{2,}/g, "$1$1");    // collapse triple consonants
+    .replace(/(\w)\1{2,}/g, "$1$1")     // collapse triple consonants
+    // ─── Slang & spoken-Tamil polish ───────────────────────────────
+    // Word-final 'u' after a consonant is usually silent in spoken Tamil:
+    // "kaadhalu" → "kaadhal", "vandhaaru" → "vandhaar", "ponnu" → "ponnu" (kept if it's actually pronounced)
+    // We're conservative: only drop 'u' if it follows a consonant cluster AND comes at word-end,
+    // AND the original ended with a pulli (which we lose at this point). So instead, target
+    // common patterns:
+    .replace(/([bcdfghjklmnprstvyz]{2})u\b/g, "$1")        // double-cons + u at word end → drop u
+    .replace(/\b(\w*?)dh\b/g, "$1dh")                      // keep dh at word end (no change, sanity)
+    // Final inherent-a often pronounced as schwa/silent in slang:
+    .replace(/([kgcjtdnpbmyrlvshz])a([\s.,!?]|$)/g, (m, c, end) => {
+      // Keep 'a' if word is very short (likely a particle like "naa", "pa")
+      return m.length <= 3 ? m : c + end;
+    })
+    // Common word patterns:
+    .replace(/\benbathu\b/gi, "endhu")           // என்பது
+    .replace(/\bizham\b/gi, "ezham")             // இழம்
+    .replace(/\bkaattum\b/gi, "kaattum")
+    // "endru" colloquially pronounced "endru" or "nnu" — keep formal
+    .replace(/\bendru\b/gi, "endru")
+    // ng + vowel: often pronounced just as ng (drop inherent a)
+    .replace(/\bngga/g, "nga")
+    // Drop trailing 'a' after a single consonant if preceded by long vowel
+    .replace(/(aa|ee|oo|ae|ai|au)([bcdfghjklmnprstvyz])a\b/g, "$1$2");
 
   return out;
 }
@@ -1290,6 +1312,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [script,     setScript]     = React.useState("roman"); // "roman" | "native"
   const [wasCached,  setWasCached]  = React.useState(false);
   const [googleRoman,setGoogleRoman]= React.useState(null);   // best-quality version
+  const [preferLocal, setPreferLocal] = React.useState(false); // user can force rule-based
   const [romanizing, setRomanizing] = React.useState(false);
   const scrollRef = React.useRef(null);
 
@@ -1345,10 +1368,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
     if (preRomanized) return lyricsData.lyrics;
     if (script === "roman" && nativeScript) {
       // Prefer Google's natural output; fall back to rule-based until it arrives
-      return googleRoman || transliterateLocal(lyricsData.lyrics);
+      if (preferLocal || !googleRoman) return transliterateLocal(lyricsData.lyrics);
+      return googleRoman;
     }
     return lyricsData.lyrics;
-  }, [lyricsData, script, nativeScript, preRomanized, googleRoman]);
+  }, [lyricsData, script, nativeScript, preRomanized, googleRoman, preferLocal]);
 
   const stanzas = displayText ? parseStructured(displayText) : [];
 
@@ -1451,7 +1475,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 romanizing
                   ? <span className="text-xs text-gray-500 flex items-center gap-1 ml-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>Enhancing…</span>
                   : googleRoman
-                    ? <span className="text-xs text-violet-400 ml-1">✨ Smart</span>
+                    ? <button onClick={()=>setPreferLocal(v=>!v)}
+                        title="Toggle between Google's smart output and rule-based phonetic output"
+                        className={`text-xs ml-1 px-2 py-0.5 rounded-md border transition-all ${preferLocal?"text-gray-400 border-[#2e2e44] hover:border-gray-500":"text-violet-400 border-violet-700/40 hover:bg-violet-600/10"}`}>
+                        {preferLocal ? "📝 Phonetic" : "✨ Smart"}
+                      </button>
                     : <span className="text-xs text-gray-600 ml-1">· basic</span>
               )}
             </>
@@ -1475,6 +1503,14 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             </div>
           )}
           {switching && <span className="text-xs text-gray-500 flex items-center gap-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/></span>}
+
+          {/* Mobile-only: transliteration engine toggle */}
+          {isMobile && nativeScript && script === "roman" && googleRoman && !romanizing && (
+            <button onClick={()=>setPreferLocal(v=>!v)} title="Toggle Smart ↔ Phonetic"
+              className={`text-xs px-2 py-1 rounded-md border transition-all ${preferLocal?"text-gray-400 border-[#2e2e44]":"text-violet-400 border-violet-700/40"}`}>
+              {preferLocal ? "📝" : "✨"}
+            </button>
+          )}
 
           <div className="ml-auto"><AutoScrollControl scrollRef={scrollRef}/></div>
         </div>
@@ -1717,13 +1753,14 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const [showAccount, setShowAccount] = React.useState(false);
 
   const searchInput = (
-    <div className="max-w-xl mx-auto w-full">
-      <div className="flex gap-2 w-full">
+    <div className="max-w-xl mx-auto w-full min-w-0">
+      <div className="flex gap-1.5 sm:gap-2 w-full min-w-0">
         <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus={!isMobile}
           placeholder={`Search by ${filterBy}…`}
-          className={`flex-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 ${isMobile?"py-2.5":"py-3"} text-white placeholder-gray-500 text-sm transition-all ${isMobile?"":"text-center"}`} />
+          className={`flex-1 min-w-0 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 ${isMobile?"py-2.5":"py-3"} text-white placeholder-gray-500 text-sm transition-all ${isMobile?"":"text-center"}`} />
         <select value={filterBy} onChange={e=>setFilterBy(e.target.value)}
-          className={`bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 ${isMobile?"py-2.5":"py-3"} text-gray-300 text-sm cursor-pointer`}>
+          style={{maxWidth: isMobile ? "92px" : "120px"}}
+          className={`flex-shrink-0 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-2 ${isMobile?"py-2.5":"py-3"} text-gray-300 text-xs sm:text-sm cursor-pointer`}>
           <option value="title">Title</option>
           <option value="movie">Movie</option>
           <option value="singer">Singer</option>
