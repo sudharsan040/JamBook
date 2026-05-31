@@ -651,8 +651,8 @@ const db = {
       saveSession({ id: newId, username, color });
       session = { id: newId, username, color };
     }
-    // Default starter folder for every new account
-    try { await this.createFolder(session, "Vibe List"); } catch (e) { console.warn("Default folder failed:", e); }
+    // Default starter folder — non-blocking; signup should never fail because of this
+    this.createFolder(session, "Vibe List").catch(e => console.warn("Default folder skipped:", e?.message || e));
     return session;
   },
 
@@ -769,24 +769,40 @@ function avatarColor(u) {
 }
 function genCode() { return Math.random().toString(36).substring(2,8).toUpperCase(); }
 
-// One-time migration: strip demo users + curated song references from prior versions
+// One-time migration: strip demo users + curated song references from prior versions.
+// Wrapped in a single try/catch — must NEVER throw at module load, would block React mount.
 (function migrate(){
-  const users = getUsers();
-  const cleaned = users.filter(u => !((u.id===1||u.id===2) && u.password==="demo123"));
-  if (cleaned.length !== users.length) {
-    saveUsers(cleaned);
-    try { localStorage.removeItem("jb_folders_1"); } catch {}
-    try { localStorage.removeItem("jb_folders_2"); } catch {}
-  }
-  for (const u of cleaned) {
-    const fs = getUserFolders(u.id);
-    let dirty = false;
-    const cleanedFs = fs.map(f => {
-      const newIds = f.songIds.filter(id => !String(id).startsWith("c"));
-      if (newIds.length !== f.songIds.length) dirty = true;
-      return { ...f, songIds: newIds };
-    });
-    if (dirty) saveUserFolders(u.id, cleanedFs);
+  try {
+    const users = getUsers();
+    const cleaned = users.filter(u => !((u.id===1||u.id===2) && u.password==="demo123"));
+    if (cleaned.length !== users.length) {
+      saveUsers(cleaned);
+      try { localStorage.removeItem("jb_folders_1"); } catch {}
+      try { localStorage.removeItem("jb_folders_2"); } catch {}
+    }
+    for (const u of cleaned) {
+      const fs = getUserFolders(u.id);
+      if (!Array.isArray(fs)) continue;
+      let dirty = false;
+      const cleanedFs = fs.map(f => {
+        if (!f) return f;
+        // Old shape used `songIds`; new shape uses `songs`. Handle both.
+        if (Array.isArray(f.songIds)) {
+          const newIds = f.songIds.filter(id => !String(id).startsWith("c"));
+          if (newIds.length !== f.songIds.length) dirty = true;
+          return { ...f, songIds: newIds };
+        }
+        if (Array.isArray(f.songs)) {
+          const newSongs = f.songs.filter(s => s && !String(s.id || "").startsWith("c"));
+          if (newSongs.length !== f.songs.length) dirty = true;
+          return { ...f, songs: newSongs };
+        }
+        return f;
+      });
+      if (dirty) saveUserFolders(u.id, cleanedFs);
+    }
+  } catch (err) {
+    console.warn("[JamBook migrate] skipped due to error:", err);
   }
 })();
 
@@ -2137,4 +2153,30 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+// ─── Error boundary — shows the actual error instead of a blank screen ───
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("[JamBook crash]", error, info); }
+  render() {
+    if (this.state.error) {
+      const msg = this.state.error?.message || String(this.state.error);
+      return (
+        <div style={{padding:24, fontFamily:"Inter, sans-serif", color:"#e8e8f0", background:"#0f0f14", minHeight:"100vh"}}>
+          <h2 style={{color:"#f87171", fontSize:18, marginBottom:8}}>⚠ App crashed</h2>
+          <pre style={{whiteSpace:"pre-wrap", fontSize:12, color:"#d4d4d8", background:"#1a1a2e", padding:12, borderRadius:8, overflow:"auto"}}>{msg}</pre>
+          <p style={{fontSize:12, color:"#71717a", marginTop:12}}>Open the console (F12) to see the full stack trace. Share the error above with the developer.</p>
+          <button onClick={()=>{ this.setState({error:null}); window.location.reload(); }}
+            style={{marginTop:16, padding:"8px 16px", background:"#7c3aed", color:"white", border:"none", borderRadius:8, cursor:"pointer", fontSize:13}}>
+            ↺ Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <ErrorBoundary><App/></ErrorBoundary>
+);
