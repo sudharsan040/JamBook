@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,12 +11,17 @@
 <link rel="preconnect" href="https://itunes.apple.com" crossorigin/>
 <link rel="dns-prefetch" href="https://lrclib.net"/>
 <link rel="dns-prefetch" href="https://translate.googleapis.com"/>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preload" href="dist/styles.css" as="style"/>
+<link rel="preload" href="dist/app.js"     as="script"/>
+<link rel="stylesheet" href="dist/styles.css"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+  href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"/>
 <script defer src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  /* Inter font is loaded async above; system fallbacks render instantly */
   * { box-sizing: border-box; }
-  body { font-family: 'Inter', sans-serif; background: #0f0f14; color: #e8e8f0; margin: 0; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #0f0f14; color: #e8e8f0; margin: 0; }
   .tamil-text  { font-family: 'Latha', 'Tamil MN', serif; }
   .chord-badge { font-family: 'Courier New', monospace; }
   ::-webkit-scrollbar { width: 5px; }
