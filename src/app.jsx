@@ -14,7 +14,7 @@ const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc262
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
 // Paste your project URL + anon key from Supabase → Settings → API.
 // If left blank the app falls back to localStorage (single-device).
-const SUPABASE_URL = "https://ztgntzelqnosogkzarjw.supabase.co";
+const SUPABASE_URL = "https://ztgntzelqnosogkzarjw.supabase.co/rest/v1/";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0Z250emVscW5vc29na3phcmp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNTIxNDAsImV4cCI6MjA5NTYyODE0MH0.WG9ozARaBQuFbmljKs7dRSd9iuyXOBPjt9vP887M6GA";
 
 const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
@@ -48,9 +48,13 @@ async function searchOneStore(query, country) {
   } catch { return []; }
 }
 
-async function searchSongs(query) {
-  // Fetch from multiple stores in parallel for max coverage
-  const batches = await Promise.all(ITUNES_STORES.map(c => searchOneStore(query, c)));
+async function searchSongs(query, language = "All") {
+  // Append a language keyword to bias iTunes toward regional results.
+  // iTunes Search has no language filter, so this is the pragmatic approach.
+  const lang   = language && language !== "All" ? language : "";
+  const term   = lang ? `${query} ${lang}` : query;
+
+  const batches = await Promise.all(ITUNES_STORES.map(c => searchOneStore(term, c)));
   const all     = batches.flat();
 
   // Dedupe by trackId — iTunes often returns the same song across stores
@@ -68,10 +72,10 @@ async function searchSongs(query) {
       album:    s.collectionName,
       cover:    s.artworkUrl100,
       preview:  s.previewUrl,
-      language: "Unknown",
+      language: lang || "Unknown",
     });
   }
-  console.log(`[JamBook] iTunes search "${query}": ${all.length} raw → ${out.length} unique songs`);
+  console.log(`[JamBook] iTunes search "${term}": ${all.length} raw → ${out.length} unique songs`);
   return out;
 }
 
@@ -1585,6 +1589,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
+  const [language, setLanguage]       = React.useState("Tamil"); // default Tamil per request
   const [allResults, setAllResults]   = React.useState([]); // full pool
   const [loading,setLoading]          = React.useState(false);
   const [creatingFolder,setCreating]  = React.useState(false);
@@ -1595,22 +1600,21 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const debounceRef = React.useRef(null);
   const resultsTopRef = React.useRef(null);
 
-  // Reset to page 0 whenever the query/filter changes
-  React.useEffect(()=>{ setPage(0); }, [query, filterBy]);
+  // Reset to page 0 whenever the query/filter/language changes
+  React.useEffect(()=>{ setPage(0); }, [query, filterBy, language]);
 
-  // Fetch the full pool when the query changes — iTunes has no offset param,
-  // so we ask for 200 results and paginate locally.
+  // Fetch the full pool when query OR language changes
   React.useEffect(()=>{
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (!query.trim() || query.trim().length<2) { setAllResults([]); return; }
     setLoading(true);
     debounceRef.current = setTimeout(async()=>{
-      const results = await searchSongs(query);
+      const results = await searchSongs(query, language);
       setAllResults(results);
       setLoading(false);
     }, 600);
     return ()=>clearTimeout(debounceRef.current);
-  },[query]);
+  },[query, language]);
 
   // Slice the current page out of the pool
   const liveResults = React.useMemo(
@@ -1687,17 +1691,28 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const [showAccount, setShowAccount] = React.useState(false);
 
   const searchInput = (
-    <div className="flex gap-2 max-w-xl mx-auto w-full">
-      <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus={!isMobile}
-        placeholder={`Search by ${filterBy}…`}
-        className={`flex-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 ${isMobile?"py-2.5":"py-3"} text-white placeholder-gray-500 text-sm transition-all ${isMobile?"":"text-center"}`} />
-      <select value={filterBy} onChange={e=>setFilterBy(e.target.value)}
-        className={`bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 ${isMobile?"py-2.5":"py-3"} text-gray-300 text-sm cursor-pointer`}>
-        <option value="title">Title</option>
-        <option value="movie">Movie</option>
-        <option value="singer">Singer</option>
-        <option value="composer">Composer</option>
-      </select>
+    <div className="max-w-xl mx-auto w-full">
+      <div className="flex gap-2 w-full">
+        <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus={!isMobile}
+          placeholder={`Search by ${filterBy}…`}
+          className={`flex-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 ${isMobile?"py-2.5":"py-3"} text-white placeholder-gray-500 text-sm transition-all ${isMobile?"":"text-center"}`} />
+        <select value={filterBy} onChange={e=>setFilterBy(e.target.value)}
+          className={`bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 ${isMobile?"py-2.5":"py-3"} text-gray-300 text-sm cursor-pointer`}>
+          <option value="title">Title</option>
+          <option value="movie">Movie</option>
+          <option value="singer">Singer</option>
+          <option value="composer">Composer</option>
+        </select>
+      </div>
+      {/* Language pills */}
+      <div className={`flex flex-wrap gap-1.5 mt-2 ${isMobile?"justify-start":"justify-center"}`}>
+        {LANGUAGES.map(l => (
+          <button key={l} onClick={()=>setLanguage(l)}
+            className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+            {l}
+          </button>
+        ))}
+      </div>
     </div>
   );
 
@@ -1985,12 +2000,21 @@ function App() {
     })();
   }, []);
 
-  // Load folders from db whenever user changes
+  // Load folders from db whenever user changes; auto-create "Vibe List" if empty.
   React.useEffect(() => {
     if (!user) { setFolders([]); return; }
     (async () => {
-      const fs = await db.getFolders(user);
-      setFolders(fs);
+      let fs = await db.getFolders(user);
+      // Guarantee every account has at least the default folder
+      if (!fs || fs.length === 0) {
+        try {
+          const def = await db.createFolder(user, "Vibe List");
+          fs = [def];
+        } catch (e) {
+          console.warn("Could not auto-create default folder:", e?.message || e);
+        }
+      }
+      setFolders(fs || []);
     })();
   }, [user?.id]);
 
