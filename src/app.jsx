@@ -726,26 +726,31 @@ function withTimeout(promise, ms, label) {
 }
 
 // Race all sources simultaneously — first with real lyrics wins.
-// tamil2lyrics goes through a CORS proxy (~2 round trips) so gets a longer cap.
+// Timeouts are GENEROUS — they only exist to kill truly dead servers.
+// On slow mobile networks 10s of latency is normal for cold TCP handshakes.
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
-  const T_DIRECT = 4500;  // direct APIs
-  const T_PROXY  = 7000;  // CORS-proxy-backed sources
+  const T_DIRECT = 12000; // direct APIs
+  const T_PROXY  = 18000; // CORS-proxy-backed (tamil2lyrics)
+  const wrap = (p, label, ms) => withTimeout(p, ms, label).catch(e => {
+    console.warn(`[lyrics] ${label} failed: ${e.message}`);
+    throw e;
+  });
   try {
     return await Promise.any([
-      withTimeout(fetchFromTamil2Lyrics(artist, norm), T_PROXY,  "tamil2lyrics"),
-      withTimeout(fetchFromLrclib      (artist, norm), T_DIRECT, "lrclib"),
-      withTimeout(fetchFromOvh         (artist, norm), T_DIRECT, "ovh"),
-      withTimeout(fetchFromSRA         (artist, norm), T_DIRECT, "sra"),
-      withTimeout(fetchFromChartLyrics (artist, norm), T_DIRECT, "chartlyrics"),
+      wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY),
+      wrap(fetchFromLrclib      (artist, norm), "lrclib",       T_DIRECT),
+      wrap(fetchFromOvh         (artist, norm), "ovh",          T_DIRECT),
+      wrap(fetchFromSRA         (artist, norm), "sra",          T_DIRECT),
+      wrap(fetchFromChartLyrics (artist, norm), "chartlyrics",  T_DIRECT),
     ]);
   } catch {
-    // Last resort: retry with title only (helps regional songs)
+    console.warn("[lyrics] all primary sources failed, retrying with title only");
     try {
       return await Promise.any([
-        withTimeout(fetchFromLrclib("", norm), T_DIRECT, "lrclib-2"),
-        withTimeout(fetchFromSRA   ("", norm), T_DIRECT, "sra-2"),
-        withTimeout(fetchFromTamil2Lyrics("", norm), T_PROXY, "tamil2lyrics-2"),
+        wrap(fetchFromLrclib      ("", norm), "lrclib-2",       T_DIRECT),
+        wrap(fetchFromSRA         ("", norm), "sra-2",          T_DIRECT),
+        wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY),
       ]);
     } catch { return null; }
   }
@@ -1793,7 +1798,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <div className="text-center py-16">
               <div className="text-5xl mb-4">🎵</div>
               <p className="text-gray-300 font-semibold text-base mb-1">Couldn't find lyrics for this song</p>
-              <p className="text-gray-600 text-sm mb-6">All 4 sources were tried simultaneously</p>
+              <p className="text-gray-600 text-sm mb-6">All sources tried — open DevTools console for details. You can also add the lyrics manually below.</p>
               <button
                 onClick={() => {
                   setNotFound(false); setLoading(true);
