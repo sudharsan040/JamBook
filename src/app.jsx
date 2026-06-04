@@ -612,7 +612,7 @@ function parseStructured(lyrics) {
 }
 
 // ── Individual lyrics sources ─────────────────────────────────────────
-const LYRIC_SOURCES = ["lrclib","lyrics.ovh","some-random-api","ChartLyrics"];
+const LYRIC_SOURCES = ["lrclib","JioSaavn"];
 
 // CORS proxy for sites that block direct browser access
 // Multi-proxy strategy: try each in order, take whichever first returns 2xx.
@@ -656,33 +656,34 @@ async function fetchFromLrclib(artist, title) {
   return { lyrics: hit.plainLyrics, source: "lrclib" };
 }
 
-// 2. lyrics.ovh — free, no key, CORS
-async function fetchFromOvh(artist, title) {
-  const r = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
-  if (!r.ok) throw new Error("not found");
-  const d = await r.json();
-  if (!d.lyrics || d.lyrics.length < 30) throw new Error("empty");
-  return { lyrics: d.lyrics, source: "lyrics.ovh" };
-}
+// 2. JioSaavn (via the free community wrapper at saavn.dev) — excellent for
+//    Indian music: Tamil, Hindi, Telugu, Malayalam, Kannada, Punjabi, etc.
+//    Two-step: search for the song, then fetch lyrics for the matched ID.
+async function fetchFromSaavn(artist, title) {
+  // Search
+  const q = title + (artist ? " " + artist : "");
+  const s = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=5`);
+  if (!s.ok) throw new Error("saavn search fail");
+  const sd = await s.json();
+  const results = sd?.data?.results || [];
+  if (!results.length) throw new Error("not found");
 
-// 3. some-random-api.com — free, no key, broad coverage
-async function fetchFromSRA(artist, title) {
-  const r = await fetch(`https://some-random-api.com/lyrics?title=${encodeURIComponent(title+' '+artist)}`);
-  if (!r.ok) throw new Error("not found");
-  const d = await r.json();
-  if (!d.lyrics || d.lyrics.length < 30) throw new Error("empty");
-  return { lyrics: d.lyrics, source: "some-random-api" };
-}
-
-// 4. ChartLyrics — free, no key
-async function fetchFromChartLyrics(artist, title) {
-  const r = await fetch(`https://api.chartlyrics.com/apiv1.asmx/SearchLyricDirect?artist=${encodeURIComponent(artist)}&song=${encodeURIComponent(title)}`);
-  if (!r.ok) throw new Error("not found");
-  const text = await r.text();
-  const m = text.match(/<Lyric>([\s\S]*?)<\/Lyric>/);
-  const l = m ? m[1].trim() : null;
-  if (!l || l.length < 30) throw new Error("empty");
-  return { lyrics: l, source: "ChartLyrics" };
+  // Try each result (only some songs have lyrics on JioSaavn)
+  for (const r of results) {
+    if (!r.hasLyrics) continue;
+    try {
+      const l = await fetch(`https://saavn.dev/api/songs/${r.id}/lyrics`);
+      if (!l.ok) continue;
+      const ld = await l.json();
+      const lyrics = ld?.data?.lyrics;
+      if (!lyrics || lyrics.length < 30) continue;
+      // The lyrics often come with <br/> tags — normalise to plain newlines
+      const text = String(lyrics).replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
+      if (text.length < 30) continue;
+      return { lyrics: text, source: "JioSaavn" };
+    } catch {}
+  }
+  throw new Error("no lyrics on saavn for any match");
 }
 
 // Hard cap each source so a slow / dead server never holds up the page.
@@ -698,8 +699,8 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// Race the 4 direct lyric APIs — first with real lyrics wins.
-// All sources have CORS enabled and don't need a proxy.
+// Race the 2 lyric APIs — first with real lyrics wins.
+// Both have CORS enabled — no proxy needed.
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
   const T_DIRECT = 12000;
@@ -709,17 +710,15 @@ async function fetchLyricsRace(artist, title) {
   });
   try {
     return await Promise.any([
-      wrap(fetchFromLrclib     (artist, norm), "lrclib"),
-      wrap(fetchFromOvh        (artist, norm), "ovh"),
-      wrap(fetchFromSRA        (artist, norm), "sra"),
-      wrap(fetchFromChartLyrics(artist, norm), "chartlyrics"),
+      wrap(fetchFromLrclib(artist, norm), "lrclib"),
+      wrap(fetchFromSaavn (artist, norm), "saavn"),
     ]);
   } catch {
-    console.warn("[lyrics] all primary sources failed, retrying with title only");
+    console.warn("[lyrics] both sources failed, retrying with title only");
     try {
       return await Promise.any([
         wrap(fetchFromLrclib("", norm), "lrclib-2"),
-        wrap(fetchFromSRA   ("", norm), "sra-2"),
+        wrap(fetchFromSaavn ("", norm), "saavn-2"),
       ]);
     } catch { return null; }
   }
@@ -729,10 +728,8 @@ async function fetchLyricsRace(artist, title) {
 async function fetchLyricsFromSource(artist, title, source) {
   const norm = normalizeTitle(title);
   try {
-    if (source === "lrclib")          return await fetchFromLrclib(artist, norm);
-    if (source === "lyrics.ovh")      return await fetchFromOvh(artist, norm);
-    if (source === "some-random-api") return await fetchFromSRA(artist, norm);
-    if (source === "ChartLyrics")     return await fetchFromChartLyrics(artist, norm);
+    if (source === "lrclib")   return await fetchFromLrclib(artist, norm);
+    if (source === "JioSaavn") return await fetchFromSaavn(artist, norm);
   } catch {}
   return null;
 }
@@ -1756,7 +1753,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {loading && (
             <div className="space-y-3">
               <Spinner/>
-              <p className="text-center text-xs text-gray-600">Racing 4 lyric sources in parallel — fastest wins</p>
+              <p className="text-center text-xs text-gray-600">Checking lrclib + JioSaavn — fastest wins</p>
             </div>
           )}
           {!loading && notFound && (
@@ -2233,7 +2230,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             <h1 className="text-3xl font-bold text-white mb-1">
               <span className="text-violet-400">{username}</span> is Jamming! 🎶
             </h1>
-            <p className="text-gray-500 text-sm mb-6">Search any song · lyrics from lrclib, lyrics.ovh & more</p>
+            <p className="text-gray-500 text-sm mb-6">Search any song · lyrics from lrclib + JioSaavn</p>
             {searchInput}
           </div>
         </div>
