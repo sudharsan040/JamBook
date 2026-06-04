@@ -725,17 +725,34 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// Race all sources simultaneously — first with real lyrics wins.
-// Timeouts are GENEROUS — they only exist to kill truly dead servers.
-// On slow mobile networks 10s of latency is normal for cold TCP handshakes.
+// ⚠ TEMPORARY TEST MODE: try ONLY tamil2lyrics.com.
+// Their lyrics are human-curated with vocal segmentation — best quality for
+// Tamil songs. If this turns out to flake too often we revert to the racer.
+// To revert: set TAMIL2_ONLY = false (multi-source race resumes).
+const TAMIL2_ONLY = true;
+
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
-  const T_DIRECT = 12000; // direct APIs
-  const T_PROXY  = 18000; // CORS-proxy-backed (tamil2lyrics)
+  const T_PROXY  = 18000;
+  const T_DIRECT = 12000;
   const wrap = (p, label, ms) => withTimeout(p, ms, label).catch(e => {
     console.warn(`[lyrics] ${label} failed: ${e.message}`);
     throw e;
   });
+
+  if (TAMIL2_ONLY) {
+    console.log(`[lyrics] TEST MODE — tamil2lyrics-only for "${title}"`);
+    try {
+      // First try with artist; if that fails, try title-only (helps some songs)
+      try {
+        return await wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY);
+      } catch {
+        return await wrap(fetchFromTamil2Lyrics("",     norm), "tamil2lyrics-titleonly", T_PROXY);
+      }
+    } catch { return null; }
+  }
+
+  // ── Full multi-source race (currently disabled by TAMIL2_ONLY above) ──
   try {
     return await Promise.any([
       wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY),
@@ -1791,7 +1808,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {loading && (
             <div className="space-y-3">
               <Spinner/>
-              <p className="text-center text-xs text-gray-600">Racing 5 lyric sources in parallel — fastest wins (max ~5s)</p>
+              <p className="text-center text-xs text-gray-600">Fetching from tamil2lyrics.com (test mode)…</p>
             </div>
           )}
           {!loading && notFound && (
