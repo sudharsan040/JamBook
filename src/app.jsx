@@ -612,7 +612,7 @@ function parseStructured(lyrics) {
 }
 
 // ── Individual lyrics sources ─────────────────────────────────────────
-const LYRIC_SOURCES = ["tamil2lyrics","lrclib","lyrics.ovh","some-random-api","ChartLyrics"];
+const LYRIC_SOURCES = ["lrclib","lyrics.ovh","some-random-api","ChartLyrics"];
 
 // CORS proxy for sites that block direct browser access
 // Multi-proxy strategy: try each in order, take whichever first returns 2xx.
@@ -638,54 +638,6 @@ async function fetchViaProxy(targetUrl) {
     }
   }
   throw lastErr || new Error("All proxies failed");
-}
-
-// 0. tamil2lyrics.com — human-curated Tanglish lyrics for Tamil songs.
-// Scrapes search results page, then the song page, extracting English/Tanglish text.
-async function fetchFromTamil2Lyrics(artist, title) {
-  // Search the site
-  const searchUrl = `https://www.tamil2lyrics.com/?s=${encodeURIComponent(title + ' ' + (artist || ''))}`;
-  const sr = await fetchViaProxy(searchUrl);
-  const searchHtml = await sr.text();
-
-  // First lyrics page link from results
-  const linkMatch = searchHtml.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[^"#?]+)"/i);
-  if (!linkMatch) throw new Error("not found");
-
-  // Fetch song page
-  const pr = await fetchViaProxy(linkMatch[1]);
-  const pageHtml = await pr.text();
-
-  // Extract the main article body
-  const bodyMatch = pageHtml.match(/<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content)[^"]*"[^>]*>([\s\S]*?)(?:<\/article|<footer|<div[^>]*class="[^"]*(?:sharedaddy|related|comments|widget))/i);
-  if (!bodyMatch) throw new Error("parse fail");
-  const body = bodyMatch[1];
-
-  // tamil2lyrics typically has Tamil section followed by an English/Tanglish section.
-  // Try to grab the English/Tanglish part specifically.
-  const engSplit = body.split(/<h[1-6][^>]*>[^<]*(?:English|Tanglish|Romanized|Translation)[^<]*<\/h[1-6]>/i);
-  const block = engSplit.length > 1 ? engSplit[engSplit.length - 1] : body;
-
-  // Strip HTML to plain text
-  let text = block
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr)>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&#?\w+;/g, " ")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  // Sanity: ensure most letters look Latin (Tanglish), not Tamil-script
-  const tamilChars  = (text.match(/[஀-௿]/g) || []).length;
-  const latinChars  = (text.match(/[a-zA-Z]/g) || []).length;
-  if (latinChars < 80 || tamilChars > latinChars) throw new Error("not tanglish");
-  if (text.length < 100) throw new Error("empty");
-
-  return { lyrics: text, source: "tamil2lyrics", alreadyRomanized: true };
 }
 
 // 1. lrclib.net — free, no key, CORS, strong Indian + global coverage
@@ -746,49 +698,28 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// ⚠ TEMPORARY TEST MODE: try ONLY tamil2lyrics.com.
-// Their lyrics are human-curated with vocal segmentation — best quality for
-// Tamil songs. If this turns out to flake too often we revert to the racer.
-// To revert: set TAMIL2_ONLY = false (multi-source race resumes).
-const TAMIL2_ONLY = true;
-
+// Race the 4 direct lyric APIs — first with real lyrics wins.
+// All sources have CORS enabled and don't need a proxy.
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
-  const T_PROXY  = 18000;
   const T_DIRECT = 12000;
-  const wrap = (p, label, ms) => withTimeout(p, ms, label).catch(e => {
+  const wrap = (p, label) => withTimeout(p, T_DIRECT, label).catch(e => {
     console.warn(`[lyrics] ${label} failed: ${e.message}`);
     throw e;
   });
-
-  if (TAMIL2_ONLY) {
-    console.log(`[lyrics] TEST MODE — tamil2lyrics-only for "${title}"`);
-    try {
-      // First try with artist; if that fails, try title-only (helps some songs)
-      try {
-        return await wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY);
-      } catch {
-        return await wrap(fetchFromTamil2Lyrics("",     norm), "tamil2lyrics-titleonly", T_PROXY);
-      }
-    } catch { return null; }
-  }
-
-  // ── Full multi-source race (currently disabled by TAMIL2_ONLY above) ──
   try {
     return await Promise.any([
-      wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY),
-      wrap(fetchFromLrclib      (artist, norm), "lrclib",       T_DIRECT),
-      wrap(fetchFromOvh         (artist, norm), "ovh",          T_DIRECT),
-      wrap(fetchFromSRA         (artist, norm), "sra",          T_DIRECT),
-      wrap(fetchFromChartLyrics (artist, norm), "chartlyrics",  T_DIRECT),
+      wrap(fetchFromLrclib     (artist, norm), "lrclib"),
+      wrap(fetchFromOvh        (artist, norm), "ovh"),
+      wrap(fetchFromSRA        (artist, norm), "sra"),
+      wrap(fetchFromChartLyrics(artist, norm), "chartlyrics"),
     ]);
   } catch {
     console.warn("[lyrics] all primary sources failed, retrying with title only");
     try {
       return await Promise.any([
-        wrap(fetchFromLrclib      ("", norm), "lrclib-2",       T_DIRECT),
-        wrap(fetchFromSRA         ("", norm), "sra-2",          T_DIRECT),
-        wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY),
+        wrap(fetchFromLrclib("", norm), "lrclib-2"),
+        wrap(fetchFromSRA   ("", norm), "sra-2"),
       ]);
     } catch { return null; }
   }
@@ -798,7 +729,6 @@ async function fetchLyricsRace(artist, title) {
 async function fetchLyricsFromSource(artist, title, source) {
   const norm = normalizeTitle(title);
   try {
-    if (source === "tamil2lyrics")    return await fetchFromTamil2Lyrics(artist, norm);
     if (source === "lrclib")          return await fetchFromLrclib(artist, norm);
     if (source === "lyrics.ovh")      return await fetchFromOvh(artist, norm);
     if (source === "some-random-api") return await fetchFromSRA(artist, norm);
@@ -1826,7 +1756,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {loading && (
             <div className="space-y-3">
               <Spinner/>
-              <p className="text-center text-xs text-gray-600">Fetching from tamil2lyrics.com (test mode)…</p>
+              <p className="text-center text-xs text-gray-600">Racing 4 lyric sources in parallel — fastest wins</p>
             </div>
           )}
           {!loading && notFound && (
