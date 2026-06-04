@@ -615,15 +615,37 @@ function parseStructured(lyrics) {
 const LYRIC_SOURCES = ["tamil2lyrics","lrclib","lyrics.ovh","some-random-api","ChartLyrics"];
 
 // CORS proxy for sites that block direct browser access
-const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+// Multi-proxy strategy: try each in order, take whichever first returns 2xx.
+// AllOrigins has been failing with CORS errors on Indian networks — others are
+// more reliable but rate-limited. Falling back through the list maximises success.
+const CORS_PROXIES = [
+  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+];
+
+async function fetchViaProxy(targetUrl) {
+  let lastErr = null;
+  for (const makeProxyUrl of CORS_PROXIES) {
+    const proxyUrl = makeProxyUrl(targetUrl);
+    try {
+      const r = await fetch(proxyUrl);
+      if (r.ok) return r;
+      lastErr = new Error(`HTTP ${r.status} from ${proxyUrl.split("?")[0]}`);
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[proxy] ${proxyUrl.split("?")[0]} failed: ${e.message}`);
+    }
+  }
+  throw lastErr || new Error("All proxies failed");
+}
 
 // 0. tamil2lyrics.com — human-curated Tanglish lyrics for Tamil songs.
 // Scrapes search results page, then the song page, extracting English/Tanglish text.
 async function fetchFromTamil2Lyrics(artist, title) {
   // Search the site
   const searchUrl = `https://www.tamil2lyrics.com/?s=${encodeURIComponent(title + ' ' + (artist || ''))}`;
-  const sr = await fetch(CORS_PROXY + encodeURIComponent(searchUrl));
-  if (!sr.ok) throw new Error("search fail");
+  const sr = await fetchViaProxy(searchUrl);
   const searchHtml = await sr.text();
 
   // First lyrics page link from results
@@ -631,8 +653,7 @@ async function fetchFromTamil2Lyrics(artist, title) {
   if (!linkMatch) throw new Error("not found");
 
   // Fetch song page
-  const pr = await fetch(CORS_PROXY + encodeURIComponent(linkMatch[1]));
-  if (!pr.ok) throw new Error("page fail");
+  const pr = await fetchViaProxy(linkMatch[1]);
   const pageHtml = await pr.text();
 
   // Extract the main article body
@@ -798,8 +819,7 @@ const saveChordCache = c    => LS.set("jb_chordcache", c);
 async function checkChordsAvailable(title, artist) {
   const tryUG = async () => {
     const url = ugLink(title, artist);
-    const r = await fetch(CORS_PROXY + encodeURIComponent(url));
-    if (!r.ok) throw new Error("ug fail");
+    const r = await fetchViaProxy(url);
     const html = await r.text();
     // UG embeds search results JSON in the page; an empty result has "results":[]
     if (/"results":\s*\[(?!\s*\])/.test(html) || /\/tab\/(chords|tabs|crd)\//i.test(html)) {
@@ -809,8 +829,7 @@ async function checkChordsAvailable(title, artist) {
   };
   const tryTorrins = async () => {
     const url = torrinsLink(title);
-    const r = await fetch(CORS_PROXY + encodeURIComponent(url));
-    if (!r.ok) throw new Error("torrins fail");
+    const r = await fetchViaProxy(url);
     const html = await r.text();
     if (/Nothing Found|No results|No posts/i.test(html)) throw new Error("torrins empty");
     if (/class="[^"]*entry-title|<article|guitar-lessons\/[a-z]/i.test(html)) {
@@ -820,8 +839,7 @@ async function checkChordsAvailable(title, artist) {
   };
   const tryGenius = async () => {
     const url = geniusLink(title, artist);
-    const r = await fetch(CORS_PROXY + encodeURIComponent(url));
-    if (!r.ok) throw new Error("genius fail");
+    const r = await fetchViaProxy(url);
     const html = await r.text();
     if (/class="[^"]*mini_card|search_result/i.test(html)) {
       return { source: "Genius", url };
