@@ -16,9 +16,10 @@ const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc262
 // esbuild replaces at build time via build.mjs `define:`.
 const SUPABASE_URL   = process.env.SUPABASE_URL;
 const SUPABASE_KEY   = process.env.SUPABASE_KEY;
-// Our own Cloudflare Worker proxy — unlocks tamil2lyrics, JioSaavn, and the
-// chord-availability check. Format: "https://<worker>.workers.dev/?url="
-const CORS_PROXY_URL = process.env.CORS_PROXY_URL;
+// Our own Cloudflare Worker proxy — safe to hardcode (the Worker is public
+// and has no secrets; CORS proxies aren't security-sensitive). Leave blank
+// to disable tamil2lyrics + JioSaavn (lrclib still works direct).
+const CORS_PROXY_URL = "https://jambook-proxy.lssusan173.workers.dev/?url=";
 const HAS_PROXY      = !!CORS_PROXY_URL;
 
 const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
