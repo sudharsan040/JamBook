@@ -690,9 +690,32 @@ async function fetchFromTamil2Lyrics(artist, title) {
 
   const pr = await fetchViaProxy(foundUrl);
   const pageHtml = await pr.text();
-  const bodyMatch = pageHtml.match(/<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content)[^"]*"[^>]*>([\s\S]*?)(?:<\/article|<footer|<div[^>]*class="[^"]*(?:sharedaddy|related|comments|widget))/i);
-  if (!bodyMatch) throw new Error("parse fail");
-  const body = bodyMatch[1];
+
+  // Try multiple body extraction strategies — sites restructure constantly
+  let body = null;
+
+  // 1. Common WP content wrappers
+  const wrappers = [
+    /<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content|td_block_wrap|tdb-block-inner|article-content|content-area)[^"]*"[^>]*>([\s\S]*?)<\/article/i,
+    /<div[^>]*class="[^"]*(?:entry-content|post-content)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i,
+    /<article[^>]*>([\s\S]*?)<\/article>/i,
+    /<main[^>]*>([\s\S]*?)<\/main>/i,
+  ];
+  for (const re of wrappers) {
+    const m = pageHtml.match(re);
+    if (m && m[1] && m[1].length > 300) { body = m[1]; break; }
+  }
+
+  // 2. Last resort: take everything between </header> and <footer>
+  if (!body) {
+    const m = pageHtml.match(/<\/header>([\s\S]*?)<footer/i);
+    if (m && m[1] && m[1].length > 300) body = m[1];
+  }
+
+  if (!body) {
+    console.warn("[tamil2lyrics] parse fail. URL:", foundUrl, "HTML preview:", pageHtml.slice(0, 400));
+    throw new Error("parse fail");
+  }
 
   const engSplit = body.split(/<h[1-6][^>]*>[^<]*(?:English|Tanglish|Romanized|Translation)[^<]*<\/h[1-6]>/i);
   const block = engSplit.length > 1 ? engSplit[engSplit.length - 1] : body;
