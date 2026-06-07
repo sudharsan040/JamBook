@@ -576,10 +576,26 @@ const TAG_BG = {
 //   1. If the source has explicit [Verse]/[Chorus]/[Male] markers, honor them.
 //   2. Otherwise, apply heuristics: stanzas that repeat verbatim → Chorus;
 //      remaining stanzas → numbered Verses.
-function parseStructured(lyrics) {
+// Detect inline tamil2lyrics-style markers like "Male : something" or "Chorus : ..."
+// that appear at the start of a lyric line. Returns { tag, label, rest } or null.
+const INLINE_MARKER_RE = /^\s*(Male|Female|Chorus|Duet|Both|Humming|Hummmm+|Whistling|Verse|Pre[- ]?Chorus|Bridge|Intro|Outro)\s*[:\-]\s*(.*)$/i;
+function matchInlineMarker(line) {
+  const m = line.match(INLINE_MARKER_RE);
+  if (!m) return null;
+  const word = m[1].toLowerCase().replace(/[^a-z]/g, "");
+  const tagMap = { male:"male", female:"female", chorus:"chorus", duet:"duet", both:"duet",
+                   humming:"humming", hummmm:"humming", whistling:"humming",
+                   verse:"verse", prechorus:"chorus", bridge:"verse", intro:"verse", outro:"verse" };
+  const tag = tagMap[word] || "verse";
+  // Pretty label — capitalise first letter
+  const label = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+  return { tag, label, rest: m[2].trim() };
+}
+
+function parseStructured(lyrics, opts = {}) {
+  const skipAutoNumber = !!opts.skipAutoNumber;
   const rawStanzas = lyrics.split(/\n{2,}/).map(s => s.trim()).filter(Boolean);
 
-  // First pass: parse each stanza's content + explicit markers
   const parsed = rawStanzas.map(stanza => {
     const rawLines = stanza.split("\n");
     let explicitSection = null;
@@ -588,23 +604,27 @@ function parseStructured(lyrics) {
       const sec = matchSection(raw);
       if (sec) { explicitSection = sec; continue; }
       if (!raw.trim()) { lines.push({ kind: "blank" }); continue; }
+      // Try inline "Male : ..." marker — set the section AND keep the rest as a lyric line
+      const inline = matchInlineMarker(raw);
+      if (inline) {
+        explicitSection = explicitSection || { tag: inline.tag, label: inline.label };
+        if (inline.rest) lines.push({ kind: "lyric", text: inline.rest });
+        continue;
+      }
       if (isChordLine(raw)) { lines.push({ kind: "chord", text: raw.trim() }); continue; }
       lines.push({ kind: "lyric", text: raw });
     }
-    // Normalised body — for repeat detection (lowercased, lyric lines only)
     const bodyKey = lines.filter(l => l.kind === "lyric").map(l => l.text.toLowerCase().trim().replace(/[.,!?;:'"]/g,"")).join("|");
     return { explicitSection, lines, bodyKey };
   });
 
-  // Second pass: count occurrences of each bodyKey
   const counts = {};
   for (const p of parsed) if (p.bodyKey) counts[p.bodyKey] = (counts[p.bodyKey] || 0) + 1;
 
-  // Third pass: assign sections
   let verseNum = 0;
   return parsed.map(p => {
     let section = p.explicitSection;
-    if (!section) {
+    if (!section && !skipAutoNumber) {
       if (p.bodyKey && counts[p.bodyKey] >= 2) {
         section = { tag: "chorus", label: "Chorus" };
       } else if (p.lines.some(l => l.kind === "lyric")) {
@@ -725,22 +745,74 @@ async function fetchFromTamil2Lyrics(artist, title) {
     throw new Error("parse fail");
   }
 
-  const engSplit = body.split(/<h[1-6][^>]*>[^<]*(?:English|Tanglish|Romanized|Translation)[^<]*<\/h[1-6]>/i);
-  const block = engSplit.length > 1 ? engSplit[engSplit.length - 1] : body;
+  // Strip out <script>, <style>, ads, and other noise BEFORE turning HTML into text
+  const cleaned = body
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<ins[\s\S]*?<\/ins>/gi, "")              // adsbygoogle <ins> blocks
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
 
-  let text = block
+  // Convert HTML → plain text
+  const toText = (html) => html
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr)>/gi, "\n\n")
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#?\w+;/g, " ")
     .replace(/[ \t]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  const tamilChars = (text.match(/[஀-௿]/g) || []).length;
-  const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
-  if (latinChars < 80 || tamilChars > latinChars) throw new Error("not tanglish");
-  if (text.length < 100) throw new Error("empty");
-  return { lyrics: text, source: "tamil2lyrics", alreadyRomanized: true };
+  // Filter out ad-script leftovers, metadata, and section labels from each line
+  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?)/i;
+  const isMostlyTamil  = (line) => {
+    const t = (line.match(/[஀-௿]/g) || []).length;
+    const l = (line.match(/[a-zA-Z]/g) || []).length;
+    return t > l;
+  };
+  const cleanLines = (text) => text.split("\n").filter(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return true; // keep blank lines for stanza breaks
+    if (NOISE_LINE_RE.test(trimmed)) return false;
+    return true;
+  }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+
+  // Try to split into Tamil section and Tanglish section using h-tag markers
+  const fullText = toText(cleaned);
+
+  // Strategy 1: split by section header lines
+  // Lines that are JUST "English", "Tanglish", "Romanized" — markers between sections
+  const sectionSplitRe = /^\s*(?:English|Tanglish|Romanized|Translation)\s*$/im;
+  const sections = fullText.split(/^\s*(?:English|Tanglish|Romanized|Translation)\s*$/im);
+
+  // Pick the section with most Latin chars = Tanglish
+  // Pick the section with most Tamil chars = Native
+  let tanglishText = "", nativeText = "";
+  for (const sec of sections) {
+    const latin = (sec.match(/[a-zA-Z]/g) || []).length;
+    const tamil = (sec.match(/[஀-௿]/g) || []).length;
+    if (latin > (tanglishText.match(/[a-zA-Z]/g)?.length || 0) && latin > tamil)  tanglishText = sec;
+    if (tamil > (nativeText.match(/[஀-௿]/g)?.length   || 0) && tamil > latin)   nativeText   = sec;
+  }
+  // Fallback if no clear split — try filtering by line content
+  if (!tanglishText) {
+    tanglishText = fullText.split("\n").filter(l => !isMostlyTamil(l)).join("\n");
+  }
+  if (!nativeText) {
+    nativeText = fullText.split("\n").filter(l => isMostlyTamil(l) || !l.trim()).join("\n");
+  }
+
+  tanglishText = cleanLines(tanglishText);
+  nativeText   = cleanLines(nativeText);
+
+  const latinChars = (tanglishText.match(/[a-zA-Z]/g) || []).length;
+  if (latinChars < 50 || tanglishText.length < 80) throw new Error("not tanglish");
+
+  return {
+    lyrics:           tanglishText,         // primary display (Tanglish for tamil2lyrics)
+    nativeLyrics:     nativeText || null,   // store native script separately so toggle works
+    source:           "tamil2lyrics",
+    alreadyRomanized: true,
+    structured:       true,                 // signal to parser: skip auto-Verse-numbering
+  };
 }
 
 // Hard cap each source so a slow / dead server never holds up the page.
@@ -756,8 +828,9 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// Race available sources — first with real lyrics wins. When the proxy is
-// configured (CORS_PROXY_URL secret set), we also include tamil2lyrics.
+// Race available sources — first with real lyrics wins. Source preference
+// comes from user settings; default is "tamil2lyrics-first" (try it first;
+// fall back to lrclib if it fails).
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
   const T_DIRECT = 12000;
@@ -766,22 +839,51 @@ async function fetchLyricsRace(artist, title) {
     console.warn(`[lyrics] ${label} failed: ${e.message}`);
     throw e;
   });
-  const sources = [wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT)];
-  if (HAS_PROXY) {
-    sources.push(wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY));
-  }
-  try {
-    return await Promise.any(sources);
-  } catch {
-    // Retry with title only — helps regional songs where artist name is messy
+
+  const pref = getSettings().lyricsSource || "tamil2lyrics-first";
+
+  // Sequential mode — try preferred source, fall back if it fails
+  const trySequential = async (first, firstName, firstTimeout, second, secondName, secondTimeout) => {
     try {
-      const retry = [wrap(fetchFromLrclib("", norm), "lrclib-2", T_DIRECT)];
-      if (HAS_PROXY) {
-        retry.push(wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY));
-      }
-      return await Promise.any(retry);
-    } catch { return null; }
+      return await wrap(first, firstName, firstTimeout);
+    } catch {
+      try { return await wrap(second, secondName, secondTimeout); }
+      catch { return null; }
+    }
+  };
+
+  if (pref === "tamil2lyrics-only" && HAS_PROXY) {
+    try { return await wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY); }
+    catch {
+      try { return await wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY); }
+      catch { return null; }
+    }
   }
+
+  if (pref === "lrclib-only" || !HAS_PROXY) {
+    try { return await wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT); }
+    catch {
+      try { return await wrap(fetchFromLrclib("", norm), "lrclib-2", T_DIRECT); }
+      catch { return null; }
+    }
+  }
+
+  if (pref === "lrclib-first" && HAS_PROXY) {
+    return await trySequential(
+      fetchFromLrclib      (artist, norm), "lrclib",       T_DIRECT,
+      fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY,
+    );
+  }
+
+  // Default: tamil2lyrics-first — try tamil2lyrics, fall back to lrclib
+  if (HAS_PROXY) {
+    return await trySequential(
+      fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY,
+      fetchFromLrclib      (artist, norm), "lrclib",       T_DIRECT,
+    );
+  }
+  // Fallback if no proxy
+  try { return await wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT); } catch { return null; }
 }
 
 // Fetch explicitly from one named source (manual switcher in UI)
@@ -807,6 +909,8 @@ const getUsers          = ()    => LS.get("jb_users",[]);
 const saveUsers         = u     => LS.set("jb_users",u);
 const getSession        = ()    => LS.get("jb_session",null);
 const saveSession       = s     => LS.set("jb_session",s);
+const getSettings       = ()    => LS.get("jb_settings", { lyricsSource: "tamil2lyrics-first" });
+const saveSettings      = s     => LS.set("jb_settings", s);
 const getUserFolders    = uid   => LS.get(`jb_folders_${uid}`,[]);
 const saveUserFolders   = (u,f) => LS.set(`jb_folders_${u}`,f);
 const getSharedFolders  = ()    => LS.get("jb_shared",{});
@@ -1167,6 +1271,63 @@ function AuthPage({onLogin}) {
 }
 
 // ─── Share / Import modals ────────────────────────────────────────────
+// ─── Settings Modal ──────────────────────────────────────────────────
+function SettingsModal({ onClose, showToast }) {
+  const [settings, setLocal] = React.useState(() => getSettings());
+
+  const update = (patch) => {
+    const next = { ...settings, ...patch };
+    setLocal(next);
+    saveSettings(next);
+    showToast("Setting saved");
+  };
+
+  const sources = [
+    { value: "tamil2lyrics-first", label: "tamil2lyrics first → fallback to lrclib",
+      hint: "Best for Tamil songs (human-curated Tanglish)" },
+    { value: "lrclib-first",       label: "lrclib first → fallback to tamil2lyrics",
+      hint: "Faster for English / global songs" },
+    { value: "tamil2lyrics-only",  label: "tamil2lyrics only",
+      hint: "If lrclib's autoroman bothers you" },
+    { value: "lrclib-only",        label: "lrclib only",
+      hint: "Skip the proxy entirely (fastest)" },
+  ];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e=>e.stopPropagation()} style={{width:"min(440px, 95vw)"}}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-bold text-white">⚙ Settings</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-400 font-medium block mb-2">Lyrics source preference</label>
+          <div className="space-y-2">
+            {sources.map(s => (
+              <label key={s.value}
+                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${settings.lyricsSource === s.value ? "border-violet-500 bg-violet-600/10" : "border-[#2e2e44] hover:border-gray-500"}`}>
+                <input type="radio" name="lyricsSource" value={s.value}
+                  checked={settings.lyricsSource === s.value}
+                  onChange={() => update({ lyricsSource: s.value })}
+                  className="mt-1 accent-violet-500" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-white font-medium">{s.label}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{s.hint}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <p className="text-xs text-gray-600 mt-5 text-center">
+          Changes take effect on the next song you open. Cached songs unaffected.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function ShareModal({folder, user, onClose, showToast, folderSongs}) {
   const shareUrl = React.useMemo(
     () => encodeShareLink(folder, user, folderSongs || []),
@@ -1557,7 +1718,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const otherSources = LYRIC_SOURCES.filter(s => s !== lyricsData?.source);
 
   const preRomanized = !!lyricsData?.alreadyRomanized;
-  const nativeScript = (!preRomanized && lyricsData?.lyrics) ? detectScript(lyricsData.lyrics) : null;
+  // If the source supplied a separate native-script version (e.g. tamil2lyrics
+  // sends both Tanglish AND Tamil), enable the toggle even when preRomanized.
+  const hasNativeAttached = !!lyricsData?.nativeLyrics;
+  const nativeScript = (!preRomanized && lyricsData?.lyrics) ? detectScript(lyricsData.lyrics)
+                     : (hasNativeAttached ? detectScript(lyricsData.nativeLyrics) : null);
 
   // Kick off Google romanization once lyrics arrive (if needed and not cached).
   React.useEffect(() => {
@@ -1575,21 +1740,24 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
   const displayText = React.useMemo(() => {
     if (!lyricsData?.lyrics) return null;
-    if (preRomanized) return lyricsData.lyrics;
 
-    if (script === "roman") {
-      // 1. User's own Tanglish edit always wins
-      if (song.customLyricsRoman) return song.customLyricsRoman;
-      // 2. If lyrics are already in roman (no Indic script detected), just show them
-      if (!nativeScript) return lyricsData.lyrics;
-      // 3. Otherwise: rule-based fallback or Google's romanization
-      if (preferLocal || !googleRoman) return transliterateLocal(lyricsData.lyrics);
-      return googleRoman;
+    if (script === "native") {
+      // Native mode — use source-supplied native text if available, else the API blob
+      if (lyricsData.nativeLyrics) return lyricsData.nativeLyrics;
+      return lyricsData.lyrics;
     }
-    return lyricsData.lyrics; // native mode
+
+    // script === "roman"
+    if (preRomanized) return lyricsData.lyrics; // source already gave us Tanglish
+    if (song.customLyricsRoman) return song.customLyricsRoman;
+    if (!nativeScript)        return lyricsData.lyrics;
+    if (preferLocal || !googleRoman) return transliterateLocal(lyricsData.lyrics);
+    return googleRoman;
   }, [lyricsData, script, nativeScript, preRomanized, googleRoman, preferLocal, song.customLyricsRoman]);
 
-  const stanzas = displayText ? parseStructured(displayText) : [];
+  const stanzas = displayText
+    ? parseStructured(displayText, { skipAutoNumber: !!lyricsData?.structured })
+    : [];
 
   const isMobile = useIsMobile();
   const [showQueue, setShowQueue] = React.useState(false);
@@ -2053,7 +2221,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 }
 
 // ─── Search Page ──────────────────────────────────────────────────────
-function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics}) {
+function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings}) {
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
@@ -2206,6 +2374,10 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 <div className="text-sm font-semibold text-white">{username}</div>
                 <div className="text-xs text-gray-500 mt-0.5">{folders.length} folder{folders.length!==1?"s":""}</div>
               </div>
+              <button onClick={()=>{ setShowAccount(false); onOpenSettings && onOpenSettings(); }}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all">
+                ⚙ Settings
+              </button>
               <button onClick={onLogout}
                 className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-all">
                 ⎋ Sign out
@@ -2466,6 +2638,7 @@ function App() {
   const [folders,setFolders]               = React.useState([]);
   const [shareTarget,setShareTarget]       = React.useState(null);
   const [showImport,setShowImport]         = React.useState(false);
+  const [showSettings,setShowSettings]     = React.useState(false);
   const isMobile                           = useIsMobile();
   const [pendingShare,setPendingShare]     = React.useState(null);
   const [toast,showToast]                  = useToast();
@@ -2690,7 +2863,7 @@ function App() {
       )}
       <main className="flex-1 overflow-hidden flex flex-col min-w-0">
         {view==="search"&&(
-          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)}/>
+          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)}/>
         )}
         {view==="song"&&activeSong&&activeSong.type==="curated"&&(
           <CuratedSongView
@@ -2746,6 +2919,9 @@ function App() {
           onClose={()=>{ setShowImport(false); if(pendingShare){ setPendingShare(null); clearShareFromUrl(); } }}
           showToast={showToast}
         />
+      )}
+      {showSettings && (
+        <SettingsModal onClose={()=>setShowSettings(false)} showToast={showToast}/>
       )}
       {toast&&<div className="toast">{toast}</div>}
     </div>
