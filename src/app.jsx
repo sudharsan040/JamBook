@@ -647,15 +647,48 @@ async function fetchFromLrclib(artist, title) {
 }
 
 // 2. tamil2lyrics.com — human-curated Tanglish; goes through OUR proxy.
+// Helper — search tamil2lyrics for a given query, return the first /lyrics/ URL found
+async function _t2lSearch(query) {
+  const searchUrl = `https://www.tamil2lyrics.com/?s=${encodeURIComponent(query)}`;
+  const sr = await fetchViaProxy(searchUrl);
+  const html = await sr.text();
+  // Try multiple href patterns — be tolerant of HTML structure changes
+  // 1. Direct lyric page link
+  let m = html.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[^"#?]+)"/i);
+  if (m) return { url: m[1], html };
+  // 2. Any tamil2lyrics post URL (the site may host posts under other paths)
+  m = html.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/[a-z0-9][a-z0-9-]+\/[^"#?]+)"/i);
+  if (m) return { url: m[1], html };
+  // 3. Relative URLs
+  m = html.match(/href="(\/lyrics\/[^"#?]+)"/i);
+  if (m) return { url: "https://www.tamil2lyrics.com" + m[1], html };
+  return { url: null, html };
+}
+
 async function fetchFromTamil2Lyrics(artist, title) {
   if (!HAS_PROXY) throw new Error("proxy not configured");
-  const searchUrl = `https://www.tamil2lyrics.com/?s=${encodeURIComponent(title + ' ' + (artist || ''))}`;
-  const sr = await fetchViaProxy(searchUrl);
-  const searchHtml = await sr.text();
-  const linkMatch = searchHtml.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[^"#?]+)"/i);
-  if (!linkMatch) throw new Error("not found");
 
-  const pr = await fetchViaProxy(linkMatch[1]);
+  // Try several query variants — search engines on WP can be picky
+  const cleanTitle = title.replace(/\(.+?\)/g, "").trim();
+  const queries = [
+    cleanTitle + (artist ? " " + artist : ""), // "Moongil Thottam Shakthisree"
+    cleanTitle,                                // "Moongil Thottam"
+    cleanTitle.split(/\s+/).slice(0, 2).join(" "), // first 2 words "Moongil Thottam"
+  ].filter((q, i, a) => q && a.indexOf(q) === i); // dedupe + drop empties
+
+  let foundUrl = null;
+  let lastHtmlPreview = "";
+  for (const q of queries) {
+    const { url, html } = await _t2lSearch(q);
+    if (url) { foundUrl = url; break; }
+    lastHtmlPreview = (html || "").slice(0, 200);
+  }
+  if (!foundUrl) {
+    console.warn("[tamil2lyrics] search returned no lyric link. HTML preview:", lastHtmlPreview);
+    throw new Error("not found");
+  }
+
+  const pr = await fetchViaProxy(foundUrl);
   const pageHtml = await pr.text();
   const bodyMatch = pageHtml.match(/<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content)[^"]*"[^>]*>([\s\S]*?)(?:<\/article|<footer|<div[^>]*class="[^"]*(?:sharedaddy|related|comments|widget))/i);
   if (!bodyMatch) throw new Error("parse fail");
