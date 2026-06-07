@@ -14,8 +14,12 @@ const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc262
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
 // `process.env.SUPABASE_URL` / `SUPABASE_KEY` are LITERAL references that
 // esbuild replaces at build time via build.mjs `define:`.
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const SUPABASE_URL   = process.env.SUPABASE_URL;
+const SUPABASE_KEY   = process.env.SUPABASE_KEY;
+// Our own Cloudflare Worker proxy — unlocks tamil2lyrics, JioSaavn, and the
+// chord-availability check. Format: "https://<worker>.workers.dev/?url="
+const CORS_PROXY_URL = process.env.CORS_PROXY_URL;
+const HAS_PROXY      = !!CORS_PROXY_URL;
 
 const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -612,32 +616,17 @@ function parseStructured(lyrics) {
 }
 
 // ── Individual lyrics sources ─────────────────────────────────────────
-const LYRIC_SOURCES = ["lrclib","JioSaavn"];
+const LYRIC_SOURCES = HAS_PROXY ? ["lrclib","tamil2lyrics","JioSaavn"] : ["lrclib"];
 
-// CORS proxy for sites that block direct browser access
-// Multi-proxy strategy: try each in order, take whichever first returns 2xx.
-// AllOrigins has been failing with CORS errors on Indian networks — others are
-// more reliable but rate-limited. Falling back through the list maximises success.
-const CORS_PROXIES = [
-  (url) => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-];
-
+// Route a fetch through our own Cloudflare Worker proxy (configured via
+// the CORS_PROXY_URL build secret). The Worker fetches the target URL
+// server-side and returns it with Access-Control-Allow-Origin: *.
 async function fetchViaProxy(targetUrl) {
-  let lastErr = null;
-  for (const makeProxyUrl of CORS_PROXIES) {
-    const proxyUrl = makeProxyUrl(targetUrl);
-    try {
-      const r = await fetch(proxyUrl);
-      if (r.ok) return r;
-      lastErr = new Error(`HTTP ${r.status} from ${proxyUrl.split("?")[0]}`);
-    } catch (e) {
-      lastErr = e;
-      console.warn(`[proxy] ${proxyUrl.split("?")[0]} failed: ${e.message}`);
-    }
-  }
-  throw lastErr || new Error("All proxies failed");
+  if (!HAS_PROXY) throw new Error("No CORS proxy configured");
+  const proxied = CORS_PROXY_URL + encodeURIComponent(targetUrl);
+  const r = await fetch(proxied);
+  if (!r.ok) throw new Error(`Proxy HTTP ${r.status}`);
+  return r;
 }
 
 // 1. lrclib.net — free, no key, CORS, strong Indian + global coverage
@@ -656,28 +645,58 @@ async function fetchFromLrclib(artist, title) {
   return { lyrics: hit.plainLyrics, source: "lrclib" };
 }
 
-// 2. JioSaavn (via the free community wrapper at saavn.dev) — excellent for
-//    Indian music: Tamil, Hindi, Telugu, Malayalam, Kannada, Punjabi, etc.
-//    Two-step: search for the song, then fetch lyrics for the matched ID.
+// 2. tamil2lyrics.com — human-curated Tanglish; goes through OUR proxy.
+async function fetchFromTamil2Lyrics(artist, title) {
+  if (!HAS_PROXY) throw new Error("proxy not configured");
+  const searchUrl = `https://www.tamil2lyrics.com/?s=${encodeURIComponent(title + ' ' + (artist || ''))}`;
+  const sr = await fetchViaProxy(searchUrl);
+  const searchHtml = await sr.text();
+  const linkMatch = searchHtml.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[^"#?]+)"/i);
+  if (!linkMatch) throw new Error("not found");
+
+  const pr = await fetchViaProxy(linkMatch[1]);
+  const pageHtml = await pr.text();
+  const bodyMatch = pageHtml.match(/<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content)[^"]*"[^>]*>([\s\S]*?)(?:<\/article|<footer|<div[^>]*class="[^"]*(?:sharedaddy|related|comments|widget))/i);
+  if (!bodyMatch) throw new Error("parse fail");
+  const body = bodyMatch[1];
+
+  const engSplit = body.split(/<h[1-6][^>]*>[^<]*(?:English|Tanglish|Romanized|Translation)[^<]*<\/h[1-6]>/i);
+  const block = engSplit.length > 1 ? engSplit[engSplit.length - 1] : body;
+
+  let text = block
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr)>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#?\w+;/g, " ")
+    .replace(/[ \t]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const tamilChars = (text.match(/[஀-௿]/g) || []).length;
+  const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
+  if (latinChars < 80 || tamilChars > latinChars) throw new Error("not tanglish");
+  if (text.length < 100) throw new Error("empty");
+  return { lyrics: text, source: "tamil2lyrics", alreadyRomanized: true };
+}
+
+// 3. JioSaavn (via saavn.dev community wrapper, routed through proxy
+//    so it works even when saavn.dev is blocked on the user's network).
 async function fetchFromSaavn(artist, title) {
-  // Search
+  if (!HAS_PROXY) throw new Error("proxy not configured");
   const q = title + (artist ? " " + artist : "");
-  const s = await fetch(`https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=5`);
-  if (!s.ok) throw new Error("saavn search fail");
+  const searchUrl = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=5`;
+  const s = await fetchViaProxy(searchUrl);
   const sd = await s.json();
   const results = sd?.data?.results || [];
   if (!results.length) throw new Error("not found");
 
-  // Try each result (only some songs have lyrics on JioSaavn)
   for (const r of results) {
     if (!r.hasLyrics) continue;
     try {
-      const l = await fetch(`https://saavn.dev/api/songs/${r.id}/lyrics`);
-      if (!l.ok) continue;
+      const lyricsUrl = `https://saavn.dev/api/songs/${r.id}/lyrics`;
+      const l = await fetchViaProxy(lyricsUrl);
       const ld = await l.json();
       const lyrics = ld?.data?.lyrics;
       if (!lyrics || lyrics.length < 30) continue;
-      // The lyrics often come with <br/> tags — normalise to plain newlines
       const text = String(lyrics).replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
       if (text.length < 30) continue;
       return { lyrics: text, source: "JioSaavn" };
@@ -699,27 +718,32 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
-// Race the 2 lyric APIs — first with real lyrics wins.
-// Both have CORS enabled — no proxy needed.
+// Race available sources — first with real lyrics wins. When the proxy is
+// configured (CORS_PROXY_URL secret set), we also include tamil2lyrics + JioSaavn.
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
   const T_DIRECT = 12000;
-  const wrap = (p, label) => withTimeout(p, T_DIRECT, label).catch(e => {
+  const T_PROXY  = 18000;
+  const wrap = (p, label, ms) => withTimeout(p, ms, label).catch(e => {
     console.warn(`[lyrics] ${label} failed: ${e.message}`);
     throw e;
   });
+  const sources = [wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT)];
+  if (HAS_PROXY) {
+    sources.push(wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY));
+    sources.push(wrap(fetchFromSaavn       (artist, norm), "saavn",        T_PROXY));
+  }
   try {
-    return await Promise.any([
-      wrap(fetchFromLrclib(artist, norm), "lrclib"),
-      wrap(fetchFromSaavn (artist, norm), "saavn"),
-    ]);
+    return await Promise.any(sources);
   } catch {
-    console.warn("[lyrics] both sources failed, retrying with title only");
+    // Retry with title only — helps regional songs where artist name is messy
     try {
-      return await Promise.any([
-        wrap(fetchFromLrclib("", norm), "lrclib-2"),
-        wrap(fetchFromSaavn ("", norm), "saavn-2"),
-      ]);
+      const retry = [wrap(fetchFromLrclib("", norm), "lrclib-2", T_DIRECT)];
+      if (HAS_PROXY) {
+        retry.push(wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY));
+        retry.push(wrap(fetchFromSaavn       ("", norm), "saavn-2",        T_PROXY));
+      }
+      return await Promise.any(retry);
     } catch { return null; }
   }
 }
@@ -728,8 +752,9 @@ async function fetchLyricsRace(artist, title) {
 async function fetchLyricsFromSource(artist, title, source) {
   const norm = normalizeTitle(title);
   try {
-    if (source === "lrclib")   return await fetchFromLrclib(artist, norm);
-    if (source === "JioSaavn") return await fetchFromSaavn(artist, norm);
+    if (source === "lrclib")       return await fetchFromLrclib(artist, norm);
+    if (source === "tamil2lyrics") return await fetchFromTamil2Lyrics(artist, norm);
+    if (source === "JioSaavn")     return await fetchFromSaavn(artist, norm);
   } catch {}
   return null;
 }
@@ -738,44 +763,8 @@ function ugLink(title, artist)    { return `https://www.ultimate-guitar.com/sear
 function torrinsLink(title)        { return `https://www.torrins.com/guitar-lessons/?s=${encodeURIComponent(title)}`; }
 function geniusLink(title, artist) { return `https://genius.com/search?q=${encodeURIComponent(title + ' ' + artist)}`; }
 
-// ── Chord-availability check (one source wins, cached per song) ───────
-const getChordCache = ()    => LS.get("jb_chordcache", {});
-const saveChordCache = c    => LS.set("jb_chordcache", c);
-
-// Race three chord sites: first one with results wins. Returns {source, url} or null.
-async function checkChordsAvailable(title, artist) {
-  const tryUG = async () => {
-    const url = ugLink(title, artist);
-    const r = await fetchViaProxy(url);
-    const html = await r.text();
-    // UG embeds search results JSON in the page; an empty result has "results":[]
-    if (/"results":\s*\[(?!\s*\])/.test(html) || /\/tab\/(chords|tabs|crd)\//i.test(html)) {
-      return { source: "Ultimate Guitar", url };
-    }
-    throw new Error("ug no results");
-  };
-  const tryTorrins = async () => {
-    const url = torrinsLink(title);
-    const r = await fetchViaProxy(url);
-    const html = await r.text();
-    if (/Nothing Found|No results|No posts/i.test(html)) throw new Error("torrins empty");
-    if (/class="[^"]*entry-title|<article|guitar-lessons\/[a-z]/i.test(html)) {
-      return { source: "Torrins", url };
-    }
-    throw new Error("torrins no results");
-  };
-  const tryGenius = async () => {
-    const url = geniusLink(title, artist);
-    const r = await fetchViaProxy(url);
-    const html = await r.text();
-    if (/class="[^"]*mini_card|search_result/i.test(html)) {
-      return { source: "Genius", url };
-    }
-    throw new Error("genius no results");
-  };
-  try { return await Promise.any([tryUG(), tryTorrins(), tryGenius()]); }
-  catch { return null; }
-}
+// Chord-availability check removed — CORS proxies are unreliable on many
+// networks. The ChordButton now just links out to chord sites unconditionally.
 
 // ─── LocalStorage ─────────────────────────────────────────────────────
 const LS = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v))}catch{} } };
@@ -1464,48 +1453,16 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
   );
 }
 
-// ─── Chord-finder button — racing UG / Torrins / Genius ──────────────
+// ─── Chord button — opens Ultimate Guitar search in a new tab ────────
+// No more pre-check via CORS proxies (they're unreliable on many networks).
+// User clicks → site opens in a new tab → they pick the chord sheet they want.
 function ChordButton({ song }) {
-  const cacheKey = `${song.title}::${song.artist || song.singer || ""}`;
-  const cached   = getChordCache()[cacheKey];
-  const [state, setState] = React.useState(
-    cached === undefined ? "checking" : (cached ? "found" : "missing")
-  );
-  const [result, setResult] = React.useState(cached || null);
-
-  React.useEffect(() => {
-    if (state !== "checking") return;
-    let alive = true;
-    checkChordsAvailable(song.title, song.artist || song.singer || "").then(r => {
-      if (!alive) return;
-      const c = getChordCache(); c[cacheKey] = r || null; saveChordCache(c);
-      setResult(r); setState(r ? "found" : "missing");
-    });
-    return () => { alive = false; };
-  }, [cacheKey]);
-
-  if (state === "checking") {
-    return (
-      <button disabled title="Checking chord sites…"
-        className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-500 cursor-wait flex items-center gap-1.5">
-        <div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>
-        <span className="hidden sm:inline">Finding chords…</span>
-      </button>
-    );
-  }
-  if (state === "missing") {
-    return (
-      <button disabled title="No chords found across Ultimate Guitar, Torrins, Genius"
-        className="text-xs px-2 py-1.5 rounded-lg border border-[#2a2a3e] text-gray-700 opacity-50 cursor-not-allowed">
-        🎸<span className="hidden sm:inline"> No chords</span>
-      </button>
-    );
-  }
+  const artist = song.artist || song.singer || "";
   return (
-    <a href={result.url} target="_blank" rel="noopener"
-      title={`Chords found on ${result.source}`}
+    <a href={ugLink(song.title, artist)} target="_blank" rel="noopener"
+      title="Search chords on Ultimate Guitar"
       className="text-xs px-2 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/50 text-amber-300 hover:bg-amber-600/30 transition-all font-medium whitespace-nowrap">
-      🎸<span className="hidden sm:inline"> {result.source} ↗</span>
+      🎸<span className="hidden sm:inline"> Chords ↗</span>
     </a>
   );
 }
@@ -1753,7 +1710,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {loading && (
             <div className="space-y-3">
               <Spinner/>
-              <p className="text-center text-xs text-gray-600">Checking lrclib + JioSaavn — fastest wins</p>
+              <p className="text-center text-xs text-gray-600">Racing lrclib{HAS_PROXY?", tamil2lyrics, JioSaavn":""} — fastest wins</p>
             </div>
           )}
           {!loading && notFound && (
@@ -2230,7 +2187,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             <h1 className="text-3xl font-bold text-white mb-1">
               <span className="text-violet-400">{username}</span> is Jamming! 🎶
             </h1>
-            <p className="text-gray-500 text-sm mb-6">Search any song · lyrics from lrclib + JioSaavn</p>
+            <p className="text-gray-500 text-sm mb-6">Search any song · lyrics from lrclib{HAS_PROXY?" + tamil2lyrics + JioSaavn":""}</p>
             {searchInput}
           </div>
         </div>
