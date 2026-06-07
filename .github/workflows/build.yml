@@ -24,30 +24,38 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install deps
-        run: |
-          npm install --silent esbuild react react-dom
-          npm install --silent tailwindcss@^3.4.0 @tailwindcss/cli@^3 || npm install --silent tailwindcss@^3.4.0
-          ls node_modules/.bin/ | grep -i tailwind || true
+      - name: Install JS deps (esbuild + react)
+        run: npm install --silent esbuild react react-dom
 
-      - name: Build CSS (precompile Tailwind — only utilities actually used)
+      - name: Build CSS via Tailwind standalone binary
+        # Uses the prebuilt Linux binary from Tailwind's GitHub releases.
+        # Zero npm/npx involvement — most reliable approach in CI.
         run: |
+          echo "::group::Setup"
           mkdir -p dist
-          # Call the binary directly — bypass npx, which fails inconsistently in CI
-          node ./node_modules/tailwindcss/lib/cli.js \
+          curl -fsSL -o ./tailwindcss \
+            https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-linux-x64
+          chmod +x ./tailwindcss
+          ./tailwindcss --help | head -3
+          echo "::endgroup::"
+
+          echo "::group::Compile"
+          ./tailwindcss \
             -c tailwind.config.js \
             -i src/styles.css \
             -o dist/styles.css \
             --minify
-          echo "--- dist/styles.css info ---"
+          echo "::endgroup::"
+
+          echo "--- dist/styles.css size ---"
           wc -c dist/styles.css
 
-      - name: Build app
+      - name: Build app JS
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: |
-          node build.mjs
+          SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+          CORS_PROXY_URL: ${{ secrets.CORS_PROXY_URL }}
+        run: node build.mjs
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
