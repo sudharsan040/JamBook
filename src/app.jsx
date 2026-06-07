@@ -18,7 +18,7 @@ const SUPABASE_URL   = process.env.SUPABASE_URL;
 const SUPABASE_KEY   = process.env.SUPABASE_KEY;
 // Our own Cloudflare Worker proxy — safe to hardcode (the Worker is public
 // and has no secrets; CORS proxies aren't security-sensitive). Leave blank
-// to disable tamil2lyrics + JioSaavn (lrclib still works direct).
+// to disable tamil2lyrics (lrclib still works direct).
 const CORS_PROXY_URL = "https://jambook-proxy.lssusan173.workers.dev/?url=";
 const HAS_PROXY      = !!CORS_PROXY_URL;
 
@@ -617,7 +617,7 @@ function parseStructured(lyrics) {
 }
 
 // ── Individual lyrics sources ─────────────────────────────────────────
-const LYRIC_SOURCES = HAS_PROXY ? ["lrclib","tamil2lyrics","JioSaavn"] : ["lrclib"];
+const LYRIC_SOURCES = HAS_PROXY ? ["lrclib","tamil2lyrics"] : ["lrclib"];
 
 // Route a fetch through our own Cloudflare Worker proxy (configured via
 // the CORS_PROXY_URL build secret). The Worker fetches the target URL
@@ -679,33 +679,6 @@ async function fetchFromTamil2Lyrics(artist, title) {
   return { lyrics: text, source: "tamil2lyrics", alreadyRomanized: true };
 }
 
-// 3. JioSaavn (via saavn.dev community wrapper, routed through proxy
-//    so it works even when saavn.dev is blocked on the user's network).
-async function fetchFromSaavn(artist, title) {
-  if (!HAS_PROXY) throw new Error("proxy not configured");
-  const q = title + (artist ? " " + artist : "");
-  const searchUrl = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&limit=5`;
-  const s = await fetchViaProxy(searchUrl);
-  const sd = await s.json();
-  const results = sd?.data?.results || [];
-  if (!results.length) throw new Error("not found");
-
-  for (const r of results) {
-    if (!r.hasLyrics) continue;
-    try {
-      const lyricsUrl = `https://saavn.dev/api/songs/${r.id}/lyrics`;
-      const l = await fetchViaProxy(lyricsUrl);
-      const ld = await l.json();
-      const lyrics = ld?.data?.lyrics;
-      if (!lyrics || lyrics.length < 30) continue;
-      const text = String(lyrics).replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim();
-      if (text.length < 30) continue;
-      return { lyrics: text, source: "JioSaavn" };
-    } catch {}
-  }
-  throw new Error("no lyrics on saavn for any match");
-}
-
 // Hard cap each source so a slow / dead server never holds up the page.
 // Mobile networks can stall any individual TLS handshake for 10+ seconds —
 // without this, the user feels everything is slow even though Promise.any
@@ -720,7 +693,7 @@ function withTimeout(promise, ms, label) {
 }
 
 // Race available sources — first with real lyrics wins. When the proxy is
-// configured (CORS_PROXY_URL secret set), we also include tamil2lyrics + JioSaavn.
+// configured (CORS_PROXY_URL secret set), we also include tamil2lyrics.
 async function fetchLyricsRace(artist, title) {
   const norm = normalizeTitle(title);
   const T_DIRECT = 12000;
@@ -732,7 +705,6 @@ async function fetchLyricsRace(artist, title) {
   const sources = [wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT)];
   if (HAS_PROXY) {
     sources.push(wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY));
-    sources.push(wrap(fetchFromSaavn       (artist, norm), "saavn",        T_PROXY));
   }
   try {
     return await Promise.any(sources);
@@ -742,7 +714,6 @@ async function fetchLyricsRace(artist, title) {
       const retry = [wrap(fetchFromLrclib("", norm), "lrclib-2", T_DIRECT)];
       if (HAS_PROXY) {
         retry.push(wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY));
-        retry.push(wrap(fetchFromSaavn       ("", norm), "saavn-2",        T_PROXY));
       }
       return await Promise.any(retry);
     } catch { return null; }
@@ -755,7 +726,6 @@ async function fetchLyricsFromSource(artist, title, source) {
   try {
     if (source === "lrclib")       return await fetchFromLrclib(artist, norm);
     if (source === "tamil2lyrics") return await fetchFromTamil2Lyrics(artist, norm);
-    if (source === "JioSaavn")     return await fetchFromSaavn(artist, norm);
   } catch {}
   return null;
 }
@@ -1711,7 +1681,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {loading && (
             <div className="space-y-3">
               <Spinner/>
-              <p className="text-center text-xs text-gray-600">Racing lrclib{HAS_PROXY?", tamil2lyrics, JioSaavn":""} — fastest wins</p>
+              <p className="text-center text-xs text-gray-600">Racing lrclib{HAS_PROXY?" + tamil2lyrics":""} — fastest wins</p>
             </div>
           )}
           {!loading && notFound && (
@@ -2188,7 +2158,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             <h1 className="text-3xl font-bold text-white mb-1">
               <span className="text-violet-400">{username}</span> is Jamming! 🎶
             </h1>
-            <p className="text-gray-500 text-sm mb-6">Search any song · lyrics from lrclib{HAS_PROXY?" + tamil2lyrics + JioSaavn":""}</p>
+            <p className="text-gray-500 text-sm mb-6">Search any song · lyrics from lrclib{HAS_PROXY?" + tamil2lyrics":""}</p>
             {searchInput}
           </div>
         </div>
