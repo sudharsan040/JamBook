@@ -647,22 +647,30 @@ async function fetchFromLrclib(artist, title) {
 }
 
 // 2. tamil2lyrics.com — human-curated Tanglish; goes through OUR proxy.
-// Helper — search tamil2lyrics for a given query, return the first /lyrics/ URL found
+// Helper — search tamil2lyrics for a given query, return the first /lyrics/ song URL found.
+// IMPORTANT: only matches actual /lyrics/ URLs, NOT static assets (favicon, wp-content, etc.)
+const T2L_LYRIC_URL_RE_ABS = /href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[a-z0-9][a-z0-9-]+\/?)"/gi;
+const T2L_LYRIC_URL_RE_REL = /href="(\/lyrics\/[a-z0-9][a-z0-9-]+\/?)"/gi;
+
 async function _t2lSearch(query) {
   const searchUrl = `https://www.tamil2lyrics.com/?s=${encodeURIComponent(query)}`;
   const sr = await fetchViaProxy(searchUrl);
   const html = await sr.text();
-  // Try multiple href patterns — be tolerant of HTML structure changes
-  // 1. Direct lyric page link
-  let m = html.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[^"#?]+)"/i);
-  if (m) return { url: m[1], html };
-  // 2. Any tamil2lyrics post URL (the site may host posts under other paths)
-  m = html.match(/href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/[a-z0-9][a-z0-9-]+\/[^"#?]+)"/i);
-  if (m) return { url: m[1], html };
-  // 3. Relative URLs
-  m = html.match(/href="(\/lyrics\/[^"#?]+)"/i);
-  if (m) return { url: "https://www.tamil2lyrics.com" + m[1], html };
-  return { url: null, html };
+
+  // Find all candidate URLs, pick the first that doesn't look like a static asset
+  const candidates = [];
+  let m;
+  while ((m = T2L_LYRIC_URL_RE_ABS.exec(html)) !== null) candidates.push(m[1]);
+  while ((m = T2L_LYRIC_URL_RE_REL.exec(html)) !== null) candidates.push("https://www.tamil2lyrics.com" + m[1]);
+  T2L_LYRIC_URL_RE_ABS.lastIndex = 0;
+  T2L_LYRIC_URL_RE_REL.lastIndex = 0;
+
+  // Filter out anything that looks like a static asset or admin URL
+  const isAsset = (u) => /\.(png|jpg|jpeg|gif|svg|webp|ico|css|js|woff|woff2|ttf|pdf)(\?|$)/i.test(u)
+    || /\/(wp-content|wp-admin|wp-includes|feed|comments|category|tag|author|page)\//i.test(u);
+  const real = candidates.filter(u => !isAsset(u));
+
+  return { url: real[0] || null, html, allCandidates: candidates };
 }
 
 async function fetchFromTamil2Lyrics(artist, title) {
