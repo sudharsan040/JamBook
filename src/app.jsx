@@ -920,27 +920,68 @@ const saveSharedFolders = s     => LS.set("jb_shared",s);
 // The link itself carries the folder data (base64-encoded JSON in ?share=).
 // This sidesteps localStorage (which is per-device) so a friend can paste
 // the link in their browser and import — no backend required.
+function _b64encode(json) {
+  return btoa(unescape(encodeURIComponent(json)))
+    .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
+// Practical browser+chat-app limit. Above this we drop the heavy embedded
+// lyrics cache so the URL still works (recipient just re-fetches on open).
+const SHARE_URL_MAX = 60000;
+
 function encodeShareLink(folder, user, songs) {
+  const base = window.location.origin + window.location.pathname;
+
+  const songStubs = songs.map(s => ({
+    id:       s.id,
+    type:     s.type || "live",
+    title:    s.title,
+    artist:   s.artist || s.singer || "",
+    album:    s.album  || s.movie  || "",
+    cover:    s.cover  || "",
+    language: s.language || "",
+  }));
+
+  // Collect every cached lyrics blob (lyrics + romanization) we have locally
+  // so the recipient sees them instantly — zero fetches needed after import.
+  const lyricsCache = {};
+  for (const s of songs) {
+    if (s.type !== "live") continue;
+    const cached = getCachedLyrics(s.id);
+    if (cached?.lyrics) {
+      // Keep only what's actually used downstream
+      lyricsCache[s.id] = {
+        lyrics:           cached.lyrics,
+        source:           cached.source,
+        googleRoman:      cached.googleRoman || undefined,
+        nativeLyrics:     cached.nativeLyrics || undefined,
+        alreadyRomanized: cached.alreadyRomanized || undefined,
+        structured:       cached.structured || undefined,
+      };
+    }
+  }
+
   const payload = {
-    v: 1,
+    v: 2,
     ownerName: user.username,
     folderName: folder.name,
-    songs: songs.map(s => ({
-      id:       s.id,
-      type:     s.type || "live",
-      title:    s.title,
-      artist:   s.artist || s.singer || "",
-      album:    s.album  || s.movie  || "",
-      cover:    s.cover  || "",
-      language: s.language || "",
-    })),
+    songs: songStubs,
+    lyricsCache: Object.keys(lyricsCache).length ? lyricsCache : undefined,
   };
-  const json = JSON.stringify(payload);
-  // UTF-8 safe base64
-  const b64  = btoa(unescape(encodeURIComponent(json)))
-                  .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-  const base = window.location.origin + window.location.pathname;
-  return `${base}?share=${b64}`;
+
+  let json = JSON.stringify(payload);
+  let url  = `${base}?share=${_b64encode(json)}`;
+
+  // If the URL would be too long, drop the heavy lyricsCache field but keep
+  // the song stubs — recipient will re-fetch on import (slightly slower but
+  // the URL still works).
+  if (url.length > SHARE_URL_MAX && payload.lyricsCache) {
+    delete payload.lyricsCache;
+    json = JSON.stringify(payload);
+    url  = `${base}?share=${_b64encode(json)}`;
+    console.warn(`[share] URL too long with cache (${url.length}); shared without embedded lyrics — recipient will re-fetch.`);
+  }
+  return url;
 }
 
 function decodeShareFromUrl() {
@@ -1006,7 +1047,7 @@ async function preFetchLyrics(song) {
 
 // Batch pre-fetch every song in a list, with concurrency limit so we don't
 // flood the network when a folder has 50+ songs.
-async function preFetchFolderSongs(songs, concurrency = 3) {
+async function preFetchFolderSongs(songs, concurrency = 5) {
   if (!Array.isArray(songs) || !songs.length) return;
   const queue = songs.filter(s => s && s.type === "live" && !s.customLyrics);
   if (!queue.length) return;
@@ -2855,13 +2896,32 @@ function App() {
   const importFolder = async (entry) => {
     const songs = (entry.songs || []).map(s => ({ ...s, type: s.type || "live" }));
     songs.forEach(cacheSong);
+
+    // If the share link included embedded lyrics, write them straight into the
+    // local lyrics cache so songs open instantly with zero fetch needed.
+    let preCachedCount = 0;
+    if (entry.lyricsCache && typeof entry.lyricsCache === "object") {
+      for (const [songId, data] of Object.entries(entry.lyricsCache)) {
+        if (data && data.lyrics) {
+          setCachedLyrics(songId, data);
+          preCachedCount++;
+        }
+      }
+    }
+
     const newF = await db.createFolder(user, `${entry.folderName} (${entry.ownerName})`);
     newF.songs = songs;
     await db.updateFolder(user, newF);
     setFolders(f => [...f, newF]);
     setPendingShare(null);
     clearShareFromUrl();
-    // Pre-fetch lyrics for every imported song in the background
+
+    if (preCachedCount) {
+      showToast(`Imported ${songs.length} songs — ${preCachedCount} ready instantly`);
+    } else {
+      showToast(`Imported ${songs.length} songs`);
+    }
+    // Pre-fetch any remaining songs (those without embedded cache) in background
     preFetchFolderSongs(songs).catch(() => {});
   };
 
