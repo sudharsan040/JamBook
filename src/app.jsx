@@ -973,13 +973,51 @@ function setCachedLyrics(songId, data) {
   c[songId] = data;
   saveLyricsCache(c);
 }
-// Pre-fetch lyrics silently and store in cache (called when song added to folder)
-function preFetchLyrics(song) {
-  if (song.type !== "live") return;
-  if (getCachedLyrics(song.id)) return; // already cached
-  fetchLyricsRace(song.artist, song.title).then(result => {
-    if (result) setCachedLyrics(song.id, result);
+// Pre-fetch lyrics silently and store in cache. Called when a song is added
+// to a folder, when a folder is loaded on app start, and when a shared folder
+// is imported. Also pre-caches the Google romanization so the user sees
+// "Smart" Tanglish instantly the first time they open the song.
+async function preFetchLyrics(song) {
+  if (!song || song.type !== "live") return;             // skip custom songs (they have lyrics embedded)
+  if (song.customLyrics) return;                          // already user-edited
+  const existing = getCachedLyrics(song.id);
+  // Skip the fetch only if BOTH lyrics + romanization are already cached
+  if (existing && (existing.googleRoman || existing.alreadyRomanized || !detectScript(existing.lyrics))) return;
+
+  try {
+    let data = existing;
+    if (!data) {
+      data = await fetchLyricsRace(song.artist, song.title);
+      if (!data) return;
+      setCachedLyrics(song.id, data);
+    }
+    // Also pre-fetch romanization for native-script lyrics (best-effort)
+    if (!data.alreadyRomanized && !data.googleRoman) {
+      const native = detectScript(data.lyrics);
+      if (native) {
+        const roman = await googleRomanize(data.lyrics);
+        if (roman) setCachedLyrics(song.id, { ...data, googleRoman: roman });
+      }
+    }
+  } catch (e) {
+    console.warn("[prefetch]", song.title, "→", e.message);
+  }
+}
+
+// Batch pre-fetch every song in a list, with concurrency limit so we don't
+// flood the network when a folder has 50+ songs.
+async function preFetchFolderSongs(songs, concurrency = 3) {
+  if (!Array.isArray(songs) || !songs.length) return;
+  const queue = songs.filter(s => s && s.type === "live" && !s.customLyrics);
+  if (!queue.length) return;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (cursor < queue.length) {
+      const s = queue[cursor++];
+      await preFetchLyrics(s);
+    }
   });
+  await Promise.all(workers);
 }
 
 // ─── Unified DB adapter — Supabase if configured, else localStorage ───
@@ -2667,6 +2705,10 @@ function App() {
         }
       }
       setFolders(fs || []);
+      // Background pre-fetch lyrics for every song across all folders so they
+      // open instantly later. Runs concurrently with 3-worker limit.
+      const allSongs = (fs || []).flatMap(f => f.songs || []);
+      if (allSongs.length) preFetchFolderSongs(allSongs).catch(() => {});
     })();
   }, [user?.id]);
 
@@ -2819,6 +2861,8 @@ function App() {
     setFolders(f => [...f, newF]);
     setPendingShare(null);
     clearShareFromUrl();
+    // Pre-fetch lyrics for every imported song in the background
+    preFetchFolderSongs(songs).catch(() => {});
   };
 
   const openSong = (song, folderId) => {
