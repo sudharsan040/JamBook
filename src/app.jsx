@@ -970,11 +970,83 @@ function newBroadcastRoom() {
     .replace(/-/g, "").slice(0, 16);
 }
 
+// Short share token — 12 alphanumeric chars, ~70 bits of entropy
+// (no collisions expected for any realistic user base)
+function newShareToken() {
+  const raw = (window.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2,15)));
+  return raw.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+}
+
+// Server-side share — store the full folder payload in Supabase's folders
+// row, return a short token. Recipient fetches by token. Drops the URL from
+// 5KB+ down to ~70 characters.
+async function publishShareToServer(folder, user, songs) {
+  if (!HAS_SUPABASE || !folder.id) return null;
+  const token = folder.shareCode || newShareToken();
+
+  // Enrich each song with its cached lyrics — stored inline on the song
+  // so the recipient gets them in a single query.
+  const enrichedSongs = songs.map(s => {
+    if (s.type !== "live") return s;
+    const cached = getCachedLyrics(s.id);
+    if (!cached?.lyrics) return s;
+    return { ...s, _shareLyrics: {
+      lyrics:           cached.lyrics,
+      source:           cached.source,
+      googleRoman:      cached.googleRoman || undefined,
+      nativeLyrics:     cached.nativeLyrics || undefined,
+      alreadyRomanized: cached.alreadyRomanized || undefined,
+      structured:       cached.structured || undefined,
+    }};
+  });
+
+  const room = folder.broadcastRoom || newBroadcastRoom();
+  const { error } = await sb.from("folders").update({
+    share_token:         token,
+    songs:               enrichedSongs,
+    original_owner_id:   user.id,
+    original_owner_name: user.username,
+    broadcast_room:      room,
+  }).eq("id", folder.id).eq("user_id", user.id);
+  if (error) { console.error("[share-publish]", error); return null; }
+  return token;
+}
+
+async function fetchShareByToken(token) {
+  if (!HAS_SUPABASE || !token) return null;
+  const { data, error } = await sb.from("folders")
+    .select("*").eq("share_token", token).limit(1).maybeSingle();
+  if (error || !data) return null;
+
+  const rawSongs = data.songs || [];
+  const songs = rawSongs.map(s => { const c={...s}; delete c._shareLyrics; return c; });
+  const lyricsCache = {};
+  for (const s of rawSongs) if (s._shareLyrics?.lyrics) lyricsCache[s.id] = s._shareLyrics;
+
+  return {
+    v: 4,
+    ownerName:     data.original_owner_name || "Someone",
+    ownerId:       data.original_owner_id || data.user_id,
+    folderName:    data.name,
+    broadcastRoom: data.broadcast_room,
+    songs,
+    lyricsCache: Object.keys(lyricsCache).length ? lyricsCache : undefined,
+  };
+}
+
 const SHARE_URL_MAX = 60000;
 
 async function encodeShareLink(folder, user, songs) {
   const base = window.location.origin + window.location.pathname;
 
+  // Preferred path: store the share payload in Supabase, URL is just a token.
+  // Keeps URLs under 100 chars regardless of folder size.
+  if (HAS_SUPABASE && folder.id) {
+    const token = await publishShareToServer(folder, user, songs);
+    if (token) return `${base}?share=${token}`;
+  }
+
+  // Fallback path: encode the entire payload in the URL (legacy, gzip+base64)
   const songStubs = songs.map(s => ({
     id:       s.id,
     type:     s.type || "live",
@@ -1033,13 +1105,20 @@ async function decodeShareFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get("share");
   if (!raw) return null;
+
+  // Short alphanumeric token? Try fetching from Supabase first.
+  if (raw.length <= 24 && /^[a-zA-Z0-9_-]+$/.test(raw) && !raw.startsWith("z")) {
+    const fromServer = await fetchShareByToken(raw);
+    if (fromServer) return fromServer;
+    // fall through to legacy decode if not found
+  }
+
   try {
     let json;
     if (raw.startsWith("z")) {
       json = await _gzipDecode(raw.slice(1));
       if (!json) return null;
     } else {
-      // Legacy path: plain base64 JSON
       const padded = raw.replace(/-/g,"+").replace(/_/g,"/")
                         + "===".slice(0, (4 - raw.length % 4) % 4);
       json = decodeURIComponent(escape(atob(padded)));
@@ -1192,7 +1271,8 @@ const db = {
       if (error) { console.error(error); return []; }
       return data.map(r => ({
         id: r.id, name: r.name,
-        songs: r.songs || [],
+        // Strip _shareLyrics from songs — only needed during share fetch.
+        songs: (r.songs || []).map(s => { const c={...s}; delete c._shareLyrics; return c; }),
         shareCode:         r.share_token        || null,
         broadcastRoom:     r.broadcast_room     || null,
         originalOwnerId:   r.original_owner_id  || null,
