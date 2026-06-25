@@ -1770,13 +1770,52 @@ function AutoScrollControl({scrollRef}) {
 }
 
 // ─── Queue Panel ──────────────────────────────────────────────────────
-function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong}) {
+function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,
+  canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
+  broadcastModerator}) {
   return (
     <div className="w-52 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col h-full">
       <div className="px-4 py-4 border-b border-[#1a1a2a]">
         <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Session Queue</div>
         <div className="text-sm font-semibold text-violet-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
+
+        {/* Broadcast controls — only when the user owns the folder */}
+        {canBroadcast && (
+          <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
+            {!isBroadcasting ? (
+              <button onClick={onStartBroadcast}
+                title="Start broadcasting — your song picks sync to everyone with this folder"
+                className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-600/10 transition-all font-medium">
+                📡 Start Broadcast
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-red-300 font-semibold flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
+                    Live
+                  </span>
+                  <span className="text-xs text-green-400 font-medium">👥 {viewerCount}</span>
+                </div>
+                <button onClick={onStopBroadcast}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 hover:bg-red-600/30 transition-all font-medium">
+                  ⏹ Stop Broadcast
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Audience-side moderator indicator */}
+        {!canBroadcast && broadcastModerator && (
+          <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
+            <div className="flex items-center gap-1.5 text-xs text-red-300">
+              <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
+              <span className="truncate">📡 {broadcastModerator.name}</span>
+            </div>
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
         {folderSongs.map((song,i)=>{
@@ -1907,7 +1946,8 @@ function ChordButton({ song }) {
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
 function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,
-  isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast}) {
+  isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
+  canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -1948,7 +1988,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
       else        { setNotFound(true); }
       setLoading(false);
     });
-  }, [song.id, song.customLyrics]);
+  }, [song.id, song.customLyrics, song.customLyricsRoman]);
 
   // Switch source manually
   const switchSource = async (src) => {
@@ -2183,7 +2223,14 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
       {/* Desktop inline queue panel */}
       {hasQueue && !isMobile && (
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong}/>
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong}
+          canBroadcast={canBroadcast}
+          isBroadcasting={isBroadcasting}
+          onStartBroadcast={onStartBroadcast}
+          onStopBroadcast={onStopBroadcast}
+          viewerCount={viewerCount}
+          broadcastModerator={broadcastModerator}
+        />
       )}
 
       {/* Mobile slide-in queue drawer */}
@@ -2198,6 +2245,31 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               </div>
               <button onClick={()=>setShowQueue(false)} className="text-gray-500 hover:text-white text-xl">✕</button>
             </div>
+            {(canBroadcast || broadcastModerator) && (
+              <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
+                {canBroadcast && !isBroadcasting && (
+                  <button onClick={()=>{onStartBroadcast(); setShowQueue(false);}}
+                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-600/10 transition-all font-medium">
+                    📡 Start Broadcast
+                  </button>
+                )}
+                {canBroadcast && isBroadcasting && (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-green-400 font-medium">👥 {viewerCount} viewer{viewerCount===1?"":"s"}</span>
+                    <button onClick={onStopBroadcast}
+                      className="text-xs px-2.5 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 transition-all font-medium animate-pulse">
+                      ⏹ Stop
+                    </button>
+                  </div>
+                )}
+                {!canBroadcast && broadcastModerator && (
+                  <div className="flex items-center gap-1.5 text-xs text-red-300">
+                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
+                    <span className="truncate">📡 {broadcastModerator.name} is live</span>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
               {folderSongs.map((s, i) => {
                 const isActive = s.id === song.id;
@@ -2590,9 +2662,18 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const searchInput = (
     <div className="max-w-xl mx-auto w-full min-w-0">
       <div className="flex gap-1.5 sm:gap-2 w-full min-w-0">
-        <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus={!isMobile}
-          placeholder={`Search by ${filterBy}…`}
-          className={`flex-1 min-w-0 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 ${isMobile?"py-2.5":"py-3"} text-white placeholder-gray-500 text-sm transition-all ${isMobile?"":"text-center"}`} />
+        <div className="relative flex-1 min-w-0">
+          <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus={!isMobile}
+            placeholder={`Search by ${filterBy}…`}
+            className={`w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl pl-3 sm:pl-4 pr-9 ${isMobile?"py-2.5":"py-3"} text-white placeholder-gray-500 text-sm transition-all ${isMobile?"":"text-center"}`} />
+          {query && (
+            <button onClick={()=>setQuery("")}
+              title="Clear search · back to folders"
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-gray-500 hover:text-white hover:bg-[#2a2a3e] transition-all text-sm">
+              ✕
+            </button>
+          )}
+        </div>
         <select value={filterBy} onChange={e=>setFilterBy(e.target.value)}
           style={{maxWidth: isMobile ? "92px" : "120px"}}
           className={`flex-shrink-0 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-2 ${isMobile?"py-2.5":"py-3"} text-gray-300 text-xs sm:text-sm cursor-pointer`}>
@@ -2685,6 +2766,26 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         {/* Live results — only when searching */}
         {hasQuery && (
           <div ref={resultsTopRef} className="max-w-3xl mx-auto mb-8">
+            {/* Quick-jump back to folders + folder chips for routing after add */}
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <button onClick={()=>setQuery("")}
+                className="text-xs px-2.5 py-1 rounded-full border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-300 transition-all">
+                ← Home
+              </button>
+              {folders.length > 0 && (
+                <>
+                  <span className="text-xs text-gray-700">·</span>
+                  <span className="text-xs text-gray-600">Jump to folder:</span>
+                  {folders.slice(0, 6).map(f => (
+                    <button key={f.id} onClick={()=>onSelectFolder(f.id)}
+                      title={`Open ${f.name}`}
+                      className="text-xs px-2.5 py-1 rounded-full border border-[#2a2a3e] text-gray-300 hover:border-violet-500 hover:text-violet-300 transition-all max-w-[140px] truncate">
+                      📁 {f.name}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">🎵 Search Results</span>
               {loading
@@ -3147,6 +3248,17 @@ function App() {
 
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
     await db.updateFolder(user, updated);
+
+    // If I'm broadcasting on this folder, push the lyrics edit to followers
+    if (isBroadcasting && broadcastChannelRef.current && activeFolderId === folderId) {
+      const targetId = (mode === "edit" && song) ? song.id : updated.songs[updated.songs.length - 1].id;
+      broadcastChannelRef.current.send({
+        type: "broadcast",
+        event: "lyrics_update",
+        payload: { songId: targetId, patch },
+      });
+    }
+
     setEditorState(null);
   };
 
@@ -3250,6 +3362,21 @@ function App() {
           setView("song");
         }
       })
+      .on("broadcast", { event: "lyrics_update" }, ({ payload }) => {
+        // Moderator edited a song's lyrics — patch any folder containing it + activeSong, refresh cache
+        if (!payload?.songId || !payload?.patch || isBroadcastingRef.current) return;
+        const { songId, patch } = payload;
+        setFolders(fs => fs.map(f => ({
+          ...f,
+          songs: (f.songs || []).map(s => s.id === songId ? { ...s, ...patch } : s),
+        })));
+        setActiveSong(prev => prev && prev.id === songId ? { ...prev, ...patch } : prev);
+        // Invalidate stale lyrics cache so LiveSongView re-reads customLyrics from song
+        try {
+          const existing = getCachedLyrics(songId);
+          if (existing) setCachedLyrics(songId, { ...existing, lyrics: patch.customLyrics || existing.lyrics, googleRoman: null });
+        } catch {}
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({ username: user?.username || "viewer" });
@@ -3348,6 +3475,10 @@ function App() {
             broadcastModerator={broadcastModerator}
             followingBroadcast={followingBroadcast}
             onLeaveBroadcast={leaveBroadcast}
+            canBroadcast={canBroadcast}
+            onStartBroadcast={startBroadcast}
+            onStopBroadcast={stopBroadcast}
+            viewerCount={viewerCount}
           />
         )}
         {view==="folder"&&activeFolder&&(
