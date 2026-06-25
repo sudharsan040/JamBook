@@ -762,7 +762,9 @@ async function fetchFromTamil2Lyrics(artist, title) {
     .trim();
 
   // Filter out ad-script leftovers, metadata, and section labels from each line
-  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?)/i;
+  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?|A[-+−–—]\s*$|Copy\s*$|Print\s*$|Share\s*$|Save\s*$|Bookmark\s*$|Font\s*Size\s*$|Increase\s*Font|Decrease\s*Font|Toggle\s*Font|Click\s*here|Read\s*more|Show\s*more|Show\s*less)/i;
+  // Boilerplate phrases that appear ANYWHERE in a line — kill the whole line
+  const NOISE_CONTAINS_RE = /Song\s+Lyrics\s+from|Tamil\s+film\s+starring|in\s+a\s+lead\s+role|song\s+was\s+sung\s+by|music\s+is\s+composed\s+by|Lyrics\s+works?\s+are\s+penned|penned\s+by\s+lyricist|Lyrics?\s+penned\s+by|directed\s+by|produced\s+by|released\s+in\s+\d{4}|adsbygoogle|googletag|window\.googletag|©\s*\d{4}|All\s+rights\s+reserved|tamil2lyrics\.com|Subscribe\s+to|Follow\s+us/i;
   const isMostlyTamil  = (line) => {
     const t = (line.match(/[஀-௿]/g) || []).length;
     const l = (line.match(/[a-zA-Z]/g) || []).length;
@@ -772,6 +774,7 @@ async function fetchFromTamil2Lyrics(artist, title) {
     const trimmed = line.trim();
     if (!trimmed) return true; // keep blank lines for stanza breaks
     if (NOISE_LINE_RE.test(trimmed)) return false;
+    if (NOISE_CONTAINS_RE.test(trimmed)) return false;
     return true;
   }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
@@ -2115,8 +2118,8 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                   className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">⋮</button>
                 {showActionMenu && (
                   <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-56 overflow-hidden">
-                    {/* Source switcher */}
-                    {lyricsData?.source && (
+                    {/* Source switcher — hidden for followers of an active broadcast */}
+                    {lyricsData?.source && !(broadcastModerator && !isBroadcasting) && (
                       <div className="px-4 py-2 border-b border-[#2e2e44]">
                         <div className="text-xs text-gray-500 mb-1.5">Source</div>
                         <div className="text-xs text-violet-300 font-medium mb-2">✓ {lyricsData.source}</div>
@@ -2134,12 +2137,19 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                       </div>
                     )}
 
-                    {/* Edit Lyrics */}
-                    {onEditSong && (
+                    {/* Edit Lyrics — hidden for followers of an active broadcast */}
+                    {onEditSong && !(broadcastModerator && !isBroadcasting) && (
                       <button onClick={()=>{onEditSong(song, displayText || lyricsData?.lyrics || ""); setShowActionMenu(false);}}
                         className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/15 hover:text-amber-300 transition-all border-b border-[#2e2e44]">
                         ✎ Edit Lyrics
                       </button>
+                    )}
+
+                    {/* Follower notice */}
+                    {broadcastModerator && !isBroadcasting && (
+                      <div className="px-4 py-2 text-xs text-gray-500 border-b border-[#2e2e44]">
+                        🔒 Editing locked while {broadcastModerator.name} is broadcasting
+                      </div>
                     )}
 
                     {/* Find Chords */}
@@ -2541,8 +2551,10 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
-              <button onClick={()=>onEditSong(song)} title="Edit lyrics"
-                className="text-gray-600 hover:text-violet-400 text-sm px-1.5 transition-all">✎</button>
+              {!(broadcastModerator && !isBroadcasting) && (
+                <button onClick={()=>onEditSong(song)} title="Edit lyrics"
+                  className="text-gray-600 hover:text-violet-400 text-sm px-1.5 transition-all">✎</button>
+              )}
               <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
                 className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
             </div>
@@ -2554,7 +2566,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 }
 
 // ─── Search Page ──────────────────────────────────────────────────────
-function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings}) {
+function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onStartBroadcast}) {
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
@@ -2658,6 +2670,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const isMobile = useIsMobile();
 
   const [showAccount, setShowAccount] = React.useState(false);
+  const [openFolderMenu, setOpenFolderMenu] = React.useState(null);
 
   const searchInput = (
     <div className="max-w-xl mx-auto w-full min-w-0">
@@ -2696,7 +2709,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" onClick={()=>{setShowMenu(null); setShowAccount(false);}}>
+    <div className="flex flex-col h-full overflow-hidden" onClick={()=>{setShowMenu(null); setShowAccount(false); setOpenFolderMenu(null);}}>
       {/* Top bar — logo + account widget */}
       <div className="flex items-center justify-between px-4 sm:px-6 pt-3 sm:pt-4 pb-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -2850,12 +2863,42 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                   className="folder-card bg-[#1a1a2e] border border-[#2a2a3e] rounded-2xl p-5 cursor-pointer transition-all relative">
                   <div className="flex items-start justify-between mb-3">
                     <div className="text-4xl">📁</div>
-                    <button
-                      onClick={e => { e.stopPropagation(); onShareFolder(f); }}
-                      title="Share folder"
-                      className="text-xs px-2 py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">
-                      ↗ Share
-                    </button>
+                    <div className="relative" onClick={e=>e.stopPropagation()}>
+                      <button
+                        onClick={()=>setOpenFolderMenu(openFolderMenu===f.id?null:f.id)}
+                        title="Folder actions"
+                        className="text-gray-400 hover:text-violet-300 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[#0d0d18] transition-all text-base">
+                        ⋮
+                      </button>
+                      {openFolderMenu===f.id && (
+                        <div className="absolute right-0 top-full mt-1 bg-[#0d0d18] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44 overflow-hidden">
+                          <button
+                            onClick={()=>{onShareFolder(f); setOpenFolderMenu(null);}}
+                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all">
+                            ↗ Share
+                          </button>
+                          {onStartBroadcast && (
+                            <button
+                              onClick={()=>{onStartBroadcast(f.id); setOpenFolderMenu(null);}}
+                              className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/15 transition-all border-t border-[#2e2e44]">
+                              📡 Start Broadcast
+                            </button>
+                          )}
+                          {onDeleteFolder && (
+                            <button
+                              onClick={()=>{
+                                if (window.confirm(`Delete folder "${f.name}"? This cannot be undone.`)) {
+                                  onDeleteFolder(f.id);
+                                }
+                                setOpenFolderMenu(null);
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/15 transition-all border-t border-[#2e2e44]">
+                              🗑 Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="text-base font-bold text-white truncate mb-1">{f.name}</div>
                   <div className="text-xs text-gray-500">{(f.songs?.length||0)} song{(f.songs?.length||0)!==1?"s":""}</div>
@@ -3025,6 +3068,8 @@ function App() {
   const [broadcastModerator, setBroadcastModerator] = React.useState(null);
   const [followingBroadcast, setFollowingBroadcast] = React.useState(false);
   const [viewerCount, setViewerCount] = React.useState(0);
+  const [pendingBroadcastId, setPendingBroadcastId] = React.useState(null);
+  const [subscribedRoom, setSubscribedRoom] = React.useState(null);
   const broadcastChannelRef = React.useRef(null);
 
   // Restore session on first load
@@ -3380,6 +3425,7 @@ function App() {
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({ username: user?.username || "viewer" });
+          setSubscribedRoom(activeFolder.broadcastRoom);
         }
       });
     return () => {
@@ -3388,6 +3434,7 @@ function App() {
       setBroadcastModerator(null);
       setFollowingBroadcast(false);
       setViewerCount(0);
+      setSubscribedRoom(null);
     };
   }, [activeFolder?.broadcastRoom]);
 
@@ -3428,6 +3475,35 @@ function App() {
     setFollowingBroadcast(false);
   };
 
+  // One-click start from the home-page folder menu: navigate + start once channel is ready
+  const requestStartBroadcast = (folderId) => {
+    setActiveFolderId(folderId);
+    setView("folder");
+    setSidebarCollapsed(false);
+    setPendingBroadcastId(folderId);
+  };
+
+  // Finalise a pending broadcast start once channel subscribes for the target folder
+  React.useEffect(() => {
+    if (!pendingBroadcastId) return;
+    if (activeFolderId !== pendingBroadcastId) return;
+    if (!activeFolder || !canBroadcast) return;
+    if (isBroadcasting) { setPendingBroadcastId(null); return; }
+    if (!activeFolder.broadcastRoom) {
+      const updated = { ...activeFolder, broadcastRoom: newBroadcastRoom() };
+      setFolders(fs => fs.map(x => x.id === activeFolder.id ? updated : x));
+      db.updateFolder(user, updated).catch(()=>{});
+      return; // wait for re-subscribe with new room
+    }
+    if (subscribedRoom !== activeFolder.broadcastRoom) return; // channel not ready yet
+    setIsBroadcasting(true);
+    broadcastChannelRef.current?.send({
+      type: "broadcast", event: "moderator_start", payload: { name: user.username },
+    });
+    showToast("Broadcasting started · your song picks will sync");
+    setPendingBroadcastId(null);
+  }, [pendingBroadcastId, activeFolderId, activeFolder?.broadcastRoom, subscribedRoom, canBroadcast, isBroadcasting]);
+
   // Boot splash while restoring session
   if (bootLoading) {
     return (
@@ -3456,7 +3532,7 @@ function App() {
       )}
       <main className="flex-1 overflow-hidden flex flex-col min-w-0">
         {view==="search"&&(
-          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)}/>
+          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onStartBroadcast={requestStartBroadcast}/>
         )}
         {view==="song"&&activeSong&&activeSong.type==="curated"&&(
           <CuratedSongView
