@@ -1043,7 +1043,7 @@ async function encodeShareLink(folder, user, songs) {
   // Keeps URLs under 100 chars regardless of folder size.
   if (HAS_SUPABASE && folder.id) {
     const token = await publishShareToServer(folder, user, songs);
-    if (token) return `${base}?share=${token}`;
+    if (token) return { url: `${base}?share=${token}`, shareCode: token };
   }
 
   // Fallback path: encode the entire payload in the URL (legacy, gzip+base64)
@@ -1098,7 +1098,7 @@ async function encodeShareLink(folder, user, songs) {
     url = await build(lite);
     console.warn(`[share] URL too long with cache — sharing without embedded lyrics (recipient will re-fetch).`);
   }
-  return url;
+  return { url, shareCode: null };
 }
 
 async function decodeShareFromUrl() {
@@ -1555,18 +1555,26 @@ function SettingsModal({ onClose, showToast }) {
   );
 }
 
-function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoom}) {
+function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoom, onShareCodePersisted}) {
   const [shareUrl, setShareUrl] = React.useState("Generating link…");
   React.useEffect(() => {
     let alive = true;
     (async () => {
+      if (folder.shareCode) {
+        const base = window.location.origin + window.location.pathname;
+        if (alive) setShareUrl(`${base}?share=${folder.shareCode}`);
+        return;
+      }
       const room = folder.broadcastRoom || newBroadcastRoom();
       if (!folder.broadcastRoom && onPersistRoom) onPersistRoom(folder.id, room);
-      const url = await encodeShareLink({ ...folder, broadcastRoom: room }, user, folderSongs || []);
-      if (alive) setShareUrl(url);
+      const { url, shareCode } = await encodeShareLink({ ...folder, broadcastRoom: room }, user, folderSongs || []);
+      if (alive) {
+        setShareUrl(url);
+        if (shareCode && onShareCodePersisted) onShareCodePersisted(folder.id, shareCode);
+      }
     })();
     return () => { alive = false; };
-  }, [folder, user, folderSongs]);
+  }, [folder.id]);
 
   const copy = () => {
     navigator.clipboard.writeText(shareUrl)
@@ -2385,7 +2393,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
 
 function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
-  broadcastModerator, followingBroadcast, onLeaveBroadcast}) {
+  broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount}) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
@@ -2416,10 +2424,15 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             </button>
           )}
           {canBroadcast && isBroadcasting && (
-            <button onClick={onStopBroadcast}
-              className="text-xs px-3 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 hover:bg-red-600/30 transition-all flex-shrink-0 animate-pulse">
-              ⏹ Stop
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {viewerCount > 0 && (
+                <span className="text-xs text-green-400 font-medium">👥 {viewerCount}</span>
+              )}
+              <button onClick={onStopBroadcast}
+                className="text-xs px-3 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 hover:bg-red-600/30 transition-all animate-pulse">
+                ⏹ Stop
+              </button>
+            </div>
           )}
           {!canBroadcast && broadcastModerator && followingBroadcast && (
             <button onClick={onLeaveBroadcast}
@@ -2910,6 +2923,7 @@ function App() {
   const [isBroadcasting, setIsBroadcasting] = React.useState(false);
   const [broadcastModerator, setBroadcastModerator] = React.useState(null);
   const [followingBroadcast, setFollowingBroadcast] = React.useState(false);
+  const [viewerCount, setViewerCount] = React.useState(0);
   const broadcastChannelRef = React.useRef(null);
 
   // Restore session on first load
@@ -3206,10 +3220,15 @@ function App() {
   React.useEffect(() => {
     if (!activeFolder?.broadcastRoom || !HAS_SUPABASE) return;
     const channel = sb.channel(`jambook-bc:${activeFolder.broadcastRoom}`, {
-      config: { broadcast: { self: false } },
+      config: { broadcast: { self: false }, presence: { key: user?.id || "anon" } },
     });
     broadcastChannelRef.current = channel;
     channel
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        const count = Object.values(state).reduce((s, arr) => s + arr.length, 0);
+        setViewerCount(count);
+      })
       .on("broadcast", { event: "moderator_start" }, ({ payload }) => {
         setBroadcastModerator(payload || { name: "Someone" });
       })
@@ -3231,12 +3250,17 @@ function App() {
           setView("song");
         }
       })
-      .subscribe();
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({ username: user?.username || "viewer" });
+        }
+      });
     return () => {
       try { sb.removeChannel(channel); } catch {}
       broadcastChannelRef.current = null;
       setBroadcastModerator(null);
       setFollowingBroadcast(false);
+      setViewerCount(0);
     };
   }, [activeFolder?.broadcastRoom]);
 
@@ -3315,7 +3339,7 @@ function App() {
         )}
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
           <LiveSongView
-            song={activeSong} onBack={()=>setView("search")} folders={folders} onAddToFolder={addToFolder}
+            song={activeSong} onBack={()=>{ user?.isGuest&&activeFolderId ? setView("folder") : setView("search"); }} folders={folders} onAddToFolder={addToFolder}
             activeFolder={activeFolder} folderSongs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolderId)}
             onEditSong={(s, currentLyrics)=>openEditSong(activeFolderId, s, currentLyrics)}
@@ -3331,7 +3355,10 @@ function App() {
             folder={activeFolder} songs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolder.id)}
             onRemove={removeFromFolder}
-            onBack={()=>{setView("search");setActiveFolderId(null);}}
+            onBack={()=>{
+              if (user?.isGuest) { logout(); return; }
+              setView("search"); setActiveFolderId(null);
+            }}
             onAddCustom={()=>openAddCustom(activeFolder.id)}
             onEditSong={(s)=>openEditSong(activeFolder.id, s)}
             canBroadcast={canBroadcast}
@@ -3341,6 +3368,7 @@ function App() {
             broadcastModerator={broadcastModerator}
             followingBroadcast={followingBroadcast}
             onLeaveBroadcast={leaveBroadcast}
+            viewerCount={viewerCount}
           />
         )}
       </main>
@@ -3370,6 +3398,10 @@ function App() {
             const updated = { ...target, broadcastRoom: room };
             setFolders(f => f.map(x => x.id === folderId ? updated : x));
             try { await db.updateFolder(user, updated); } catch {}
+          }}
+          onShareCodePersisted={(folderId, code) => {
+            setShareTarget(prev => prev?.id === folderId ? { ...prev, shareCode: code } : prev);
+            setFolders(fs => fs.map(x => x.id === folderId ? { ...x, shareCode: code } : x));
           }}
         />
       )}
