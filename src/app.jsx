@@ -2575,7 +2575,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 }
 
 // ─── Search Page ──────────────────────────────────────────────────────
-function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onStartBroadcast}) {
+function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onStartBroadcast,liveBroadcasts={},onJumpToLive}) {
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
@@ -2873,9 +2873,11 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Existing folders */}
-              {folders.map(f => (
+              {folders.map(f => {
+                const live = liveBroadcasts[f.id];
+                return (
                 <div key={f.id} onClick={()=>onSelectFolder(f.id)}
-                  className="folder-card bg-[#1a1a2e] border border-[#2a2a3e] rounded-2xl p-5 cursor-pointer transition-all relative">
+                  className={`folder-card bg-[#1a1a2e] border ${live?"border-red-500/40 ring-1 ring-red-500/20":"border-[#2a2a3e]"} rounded-2xl p-5 cursor-pointer transition-all relative`}>
                   <div className="flex items-start justify-between mb-3">
                     <div className="text-4xl">📁</div>
                     <div className="relative" onClick={e=>e.stopPropagation()}>
@@ -2917,8 +2919,29 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                   </div>
                   <div className="text-base font-bold text-white truncate mb-1">{f.name}</div>
                   <div className="text-xs text-gray-500">{(f.songs?.length||0)} song{(f.songs?.length||0)!==1?"s":""}</div>
+
+                  {live && (
+                    <button
+                      onClick={e => { e.stopPropagation(); onJumpToLive && onJumpToLive(f.id); }}
+                      title={live.currentSong ? `Tap to join — now playing: ${live.currentSong.title}` : "Tap to join the broadcast"}
+                      className="mt-3 w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600/15 border border-red-500/40 hover:bg-red-600/25 transition-all text-left">
+                      <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0"/>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-red-300 leading-tight">
+                          🔴 LIVE · {live.moderatorName}
+                        </div>
+                        {live.currentSong && (
+                          <div className="text-xs text-gray-400 truncate mt-0.5">
+                            ▶ {live.currentSong.title}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-xs text-red-300 flex-shrink-0">Join →</span>
+                    </button>
+                  )}
                 </div>
-              ))}
+                );
+              })}
 
               {/* Create new folder card */}
               {!creatingFolder ? (
@@ -3086,7 +3109,12 @@ function App() {
   const [pendingBroadcastId, setPendingBroadcastId] = React.useState(null);
   const [subscribedRoom, setSubscribedRoom] = React.useState(null);
   const [lyricsRefreshTick, setLyricsRefreshTick] = React.useState(0);
+  // liveBroadcasts: { [folderId]: { moderatorName, currentSong } } — populated by
+  // the lightweight monitor channels we keep open for every folder that has a
+  // broadcastRoom, so the home page can show "🔴 LIVE" without entering the folder.
+  const [liveBroadcasts, setLiveBroadcasts] = React.useState({});
   const broadcastChannelRef = React.useRef(null);
+  const monitorChannelsRef  = React.useRef({}); // { [folderId]: { channel, room } }
 
   // Restore session on first load
   React.useEffect(() => {
@@ -3377,6 +3405,16 @@ function App() {
         event: "song_change",
         payload: { song, cachedLyrics, broadcaster: user?.username },
       });
+      // Update monitor presence so the home page's "currently playing" stays fresh
+      const monEntry = resolved && monitorChannelsRef.current[resolved];
+      if (monEntry?.channel) {
+        try {
+          monEntry.channel.track({
+            role: "moderator", userId: user.id, name: user.username,
+            currentSong: song,
+          });
+        } catch {}
+      }
     }
   };
 
@@ -3388,6 +3426,67 @@ function App() {
   const canBroadcast = !!activeFolder && (
     !activeFolder.originalOwnerId || activeFolder.originalOwnerId === user?.id
   );
+
+  // ─── Lightweight monitor channels — one per folder with a broadcastRoom.
+  // These exist so the home page can show "🔴 LIVE" without the user being in
+  // the folder. The moderator tracks { role: "moderator", currentSong } on the
+  // monitor channel when broadcasting; everyone else tracks { role: "viewer" }.
+  React.useEffect(() => {
+    if (!HAS_SUPABASE || !user || user.isGuest) return;
+
+    const desired = new Map(); // folderId -> broadcastRoom
+    for (const f of folders) if (f.broadcastRoom) desired.set(f.id, f.broadcastRoom);
+
+    // Add missing / changed
+    for (const [fid, room] of desired) {
+      const existing = monitorChannelsRef.current[fid];
+      if (existing?.room === room) continue;
+      if (existing) { try { sb.removeChannel(existing.channel); } catch {} }
+
+      const ch = sb.channel(`jambook-bc-mon:${room}`, {
+        config: { presence: { key: `${user.id}_${fid}` } },
+      });
+      ch.on("presence", { event: "sync" }, () => {
+        const state = ch.presenceState();
+        const all = Object.values(state).flat();
+        const mod = all.find(p => p.role === "moderator");
+        setLiveBroadcasts(prev => {
+          if (mod) {
+            return { ...prev, [fid]: { moderatorName: mod.name || "Someone", currentSong: mod.currentSong || null } };
+          }
+          if (!(fid in prev)) return prev;
+          const next = { ...prev }; delete next[fid]; return next;
+        });
+      });
+      ch.subscribe(async (status) => {
+        if (status !== "SUBSCRIBED") return;
+        // Default presence: a viewer. The moderator overwrites this in startBroadcast.
+        await ch.track({ role: "viewer", userId: user.id });
+      });
+      monitorChannelsRef.current[fid] = { channel: ch, room };
+    }
+
+    // Drop channels for folders we no longer have / no longer have a room
+    for (const fid of Object.keys(monitorChannelsRef.current)) {
+      if (!desired.has(fid)) {
+        try { sb.removeChannel(monitorChannelsRef.current[fid].channel); } catch {}
+        delete monitorChannelsRef.current[fid];
+        setLiveBroadcasts(prev => {
+          if (!(fid in prev)) return prev;
+          const next = { ...prev }; delete next[fid]; return next;
+        });
+      }
+    }
+  }, [folders.map(f => `${f.id}:${f.broadcastRoom || ""}`).join("|"), user?.id]);
+
+  // Tear down all monitor channels when the user signs out / changes
+  React.useEffect(() => () => {
+    for (const v of Object.values(monitorChannelsRef.current)) {
+      try { sb.removeChannel(v.channel); } catch {}
+    }
+    monitorChannelsRef.current = {};
+    setLiveBroadcasts({});
+  }, [user?.id]);
 
   // Subscribe to the broadcast channel for the active folder
   React.useEffect(() => {
@@ -3482,6 +3581,16 @@ function App() {
     if (channel) {
       channel.send({ type: "broadcast", event: "moderator_start", payload: { name: user.username } });
     }
+    // Announce on the monitor channel so the home page sees us as live
+    const monEntry = monitorChannelsRef.current[folder.id];
+    if (monEntry?.channel) {
+      try {
+        await monEntry.channel.track({
+          role: "moderator", userId: user.id, name: user.username,
+          currentSong: activeSong || null,
+        });
+      } catch {}
+    }
     showToast("Broadcasting started · your song picks will sync");
   };
 
@@ -3490,6 +3599,13 @@ function App() {
     const channel = broadcastChannelRef.current;
     if (channel) {
       channel.send({ type: "broadcast", event: "moderator_stop", payload: {} });
+    }
+    // Demote ourselves on the monitor channel so home page indicators clear
+    if (activeFolderId) {
+      const monEntry = monitorChannelsRef.current[activeFolderId];
+      if (monEntry?.channel) {
+        try { await monEntry.channel.track({ role: "viewer", userId: user.id }); } catch {}
+      }
     }
     showToast("Broadcast stopped");
   };
@@ -3508,6 +3624,23 @@ function App() {
       payload: { songId, lyricsData },
     });
   }, [isBroadcasting]);
+
+  // Jump straight into a live broadcast from a home-page folder card.
+  // Opens the folder, switches view to the song the moderator is currently on
+  // (if known), and caches it so LiveSongView can render immediately.
+  const jumpToLiveBroadcast = (folderId) => {
+    const info = liveBroadcasts[folderId];
+    setActiveFolderId(folderId);
+    if (info?.currentSong) {
+      cacheSong(info.currentSong);
+      setActiveSong(info.currentSong);
+      setView("song");
+      setFollowingBroadcast(true);
+    } else {
+      setView("folder");
+    }
+    setSidebarCollapsed(true);
+  };
 
   // One-click start from the home-page folder menu: navigate + start once channel is ready
   const requestStartBroadcast = (folderId) => {
@@ -3566,7 +3699,7 @@ function App() {
       )}
       <main className="flex-1 overflow-hidden flex flex-col min-w-0">
         {view==="search"&&(
-          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onStartBroadcast={requestStartBroadcast}/>
+          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onStartBroadcast={requestStartBroadcast} liveBroadcasts={liveBroadcasts} onJumpToLive={jumpToLiveBroadcast}/>
         )}
         {view==="song"&&activeSong&&activeSong.type==="curated"&&(
           <CuratedSongView
