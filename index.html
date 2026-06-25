@@ -65,6 +65,9 @@
   @keyframes shimmer { 0%{background-position:200% 0}100%{background-position:-200% 0} }
   .curated-badge { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
   .live-badge    { background:rgba(16,185,129,.15);  color:#34d399; border:1px solid rgba(16,185,129,.3); }
+  /* Horizontal chip strip — hide native scrollbar; tap-to-swipe is enough */
+  .chip-strip { -ms-overflow-style:none; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+  .chip-strip::-webkit-scrollbar { display:none; }
 </style>
 </head>
 <body>
