@@ -1288,6 +1288,10 @@ const db = {
   },
 
   async createFolder(user, name) {
+    if (user?.isGuest) {
+      // Guests get an in-memory folder; nothing persisted.
+      return { id: newFolderId(), name, songs: [], shareCode: null };
+    }
     if (HAS_SUPABASE) {
       const { data, error } = await sb.from("folders")
         .insert({ user_id: user.id, name, songs: [] })
@@ -1302,6 +1306,7 @@ const db = {
   },
 
   async updateFolder(user, folder) {
+    if (user?.isGuest) return; // no-op for guests
     if (HAS_SUPABASE) {
       const patch = {
         name:                 folder.name,
@@ -1322,6 +1327,7 @@ const db = {
   },
 
   async deleteFolder(user, folderId) {
+    if (user?.isGuest) return; // no-op for guests
     if (HAS_SUPABASE) {
       await sb.from("folders").delete().eq("id", folderId).eq("user_id", user.id);
       return;
@@ -2611,19 +2617,30 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             <span className="text-xs text-gray-300 pr-1 hidden sm:inline">{username}</span>
           </button>
           {showAccount && (
-            <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-48 overflow-hidden">
+            <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-52 overflow-hidden">
               <div className="px-4 py-3 border-b border-[#2e2e44]">
                 <div className="text-sm font-semibold text-white">{username}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{folders.length} folder{folders.length!==1?"s":""}</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {user.isGuest ? "Guest mode — nothing saved yet" : `${folders.length} folder${folders.length!==1?"s":""}`}
+                </div>
               </div>
-              <button onClick={()=>{ setShowAccount(false); onOpenSettings && onOpenSettings(); }}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all">
-                ⚙ Settings
-              </button>
-              <button onClick={onLogout}
-                className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-all">
-                ⎋ Sign out
-              </button>
+              {user.isGuest ? (
+                <button onClick={onLogout}
+                  className="w-full text-left px-4 py-2.5 text-sm text-violet-300 hover:bg-violet-600/20 transition-all">
+                  ✨ Sign up to save this
+                </button>
+              ) : (
+                <>
+                  <button onClick={()=>{ setShowAccount(false); onOpenSettings && onOpenSettings(); }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all">
+                    ⚙ Settings
+                  </button>
+                  <button onClick={onLogout}
+                    className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-all">
+                    ⎋ Sign out
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -2905,11 +2922,12 @@ function App() {
   }, []);
 
   // Load folders from db whenever user changes; auto-create "Vibe List" if empty.
+  // Skipped entirely for guest users — they only see the shared folder.
   React.useEffect(() => {
-    if (!user) { setFolders([]); return; }
+    if (!user)         { setFolders([]); return; }
+    if (user.isGuest)  return; // guest folder is materialised by share-effect
     (async () => {
       let fs = await db.getFolders(user);
-      // Guarantee every account has at least the default folder
       if (!fs || fs.length === 0) {
         try {
           const def = await db.createFolder(user, "Vibe List");
@@ -2919,8 +2937,6 @@ function App() {
         }
       }
       setFolders(fs || []);
-      // Background pre-fetch lyrics for every song across all folders so they
-      // open instantly later. Runs concurrently with 3-worker limit.
       const allSongs = (fs || []).flatMap(f => f.songs || []);
       if (allSongs.length) preFetchFolderSongs(allSongs).catch(() => {});
     })();
@@ -2934,15 +2950,67 @@ function App() {
     })();
   }, []);
 
-  // Once a user is logged in AND we have a pending share, open the import modal
+  // When a share link is opened by a signed-in user → prompt them to import.
+  // When opened by a guest (no account) → drop them STRAIGHT into a preview
+  // of the folder, no auth wall. They can sign up later to save it.
   React.useEffect(() => {
-    if (user && pendingShare) setShowImport(true);
+    if (!pendingShare) return;
+    if (user && !user.isGuest) {
+      setShowImport(true);
+      return;
+    }
+    if (!user) {
+      // Create an in-memory guest session — no Supabase writes, no persistence
+      const guest = {
+        id:        "guest_" + Math.random().toString(36).slice(2,10),
+        username:  pendingShare.ownerName ? `Guest of ${pendingShare.ownerName}` : "Guest",
+        color:     "#6b7280",
+        isGuest:   true,
+      };
+      setUser(guest);
+    }
+  }, [user, pendingShare]);
+
+  // After guest user is set + we have a pending share, materialise the folder
+  // locally so the existing FolderView/LiveSongView can render it as-is.
+  React.useEffect(() => {
+    if (!user?.isGuest || !pendingShare) return;
+    if (folders.some(f => f.broadcastRoom === pendingShare.broadcastRoom)) return;
+    const songs = (pendingShare.songs || []).map(s => ({ ...s, type: s.type || "live" }));
+    songs.forEach(cacheSong);
+    if (pendingShare.lyricsCache) {
+      for (const [songId, data] of Object.entries(pendingShare.lyricsCache)) {
+        if (data?.lyrics) setCachedLyrics(songId, data);
+      }
+    }
+    const guestFolder = {
+      id:                 "guest_folder_" + (pendingShare.broadcastRoom || newFolderId()),
+      name:               pendingShare.folderName || "Shared folder",
+      songs,
+      shareCode:          null,
+      broadcastRoom:      pendingShare.broadcastRoom || null,
+      originalOwnerId:    pendingShare.ownerId || null,
+      originalOwnerName:  pendingShare.ownerName || null,
+    };
+    setFolders([guestFolder]);
+    setActiveFolderId(guestFolder.id);
+    setView("folder");
+    preFetchFolderSongs(songs).catch(() => {});
   }, [user, pendingShare]);
 
   const logout = async () => {
+    // Guest → flip to the auth page (preserving pendingShare so they can
+    // sign up and import this folder permanently).
+    if (user?.isGuest) {
+      setUser(null); setFolders([]); setView("search");
+      setActiveSong(null); setActiveFolderId(null); setSidebarCollapsed(false);
+      return;
+    }
     await db.signOut();
     setUser(null); setFolders([]); setView("search");
     setActiveSong(null); setActiveFolderId(null); setSidebarCollapsed(false);
+    setPendingShare(null);
+    clearShareFromUrl();
   };
 
   const createFolder = async (name) => {
