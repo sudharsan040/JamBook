@@ -920,16 +920,59 @@ const saveSharedFolders = s     => LS.set("jb_shared",s);
 // The link itself carries the folder data (base64-encoded JSON in ?share=).
 // This sidesteps localStorage (which is per-device) so a friend can paste
 // the link in their browser and import — no backend required.
-function _b64encode(json) {
-  return btoa(unescape(encodeURIComponent(json)))
-    .replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+function _b64encode(bytesOrStr) {
+  // bytesOrStr is either a Uint8Array (gzip) or a UTF-8 string (legacy path)
+  let binary;
+  if (typeof bytesOrStr === "string") {
+    binary = unescape(encodeURIComponent(bytesOrStr));
+  } else {
+    binary = "";
+    for (let i = 0; i < bytesOrStr.length; i++) binary += String.fromCharCode(bytesOrStr[i]);
+  }
+  return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 }
 
-// Practical browser+chat-app limit. Above this we drop the heavy embedded
-// lyrics cache so the URL still works (recipient just re-fetches on open).
+function _b64decodeBytes(b64) {
+  const padded = b64.replace(/-/g,"+").replace(/_/g,"/")
+                    + "===".slice(0, (4 - b64.length % 4) % 4);
+  const binary = atob(padded);
+  const bytes  = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// Gzip-compress a JSON string and return URL-safe base64 (~60-75% smaller).
+// Uses the browser-native CompressionStream API. Falls back to plain base64
+// if the API isn't available (very old browsers).
+async function _gzipEncode(json) {
+  if (typeof CompressionStream === "undefined") return null;
+  try {
+    const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+    const buffer = await new Response(stream).arrayBuffer();
+    return _b64encode(new Uint8Array(buffer));
+  } catch { return null; }
+}
+
+async function _gzipDecode(b64) {
+  if (typeof DecompressionStream === "undefined") return null;
+  try {
+    const bytes  = _b64decodeBytes(b64);
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const buffer = await new Response(stream).arrayBuffer();
+    return new TextDecoder().decode(buffer);
+  } catch { return null; }
+}
+
+// Generate a short broadcast-room ID — used to scope a Supabase Realtime
+// channel between a folder owner (broadcaster) and the people they share with.
+function newBroadcastRoom() {
+  return (window.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2,10)))
+    .replace(/-/g, "").slice(0, 16);
+}
+
 const SHARE_URL_MAX = 60000;
 
-function encodeShareLink(folder, user, songs) {
+async function encodeShareLink(folder, user, songs) {
   const base = window.location.origin + window.location.pathname;
 
   const songStubs = songs.map(s => ({
@@ -942,14 +985,12 @@ function encodeShareLink(folder, user, songs) {
     language: s.language || "",
   }));
 
-  // Collect every cached lyrics blob (lyrics + romanization) we have locally
-  // so the recipient sees them instantly — zero fetches needed after import.
+  // Collect every cached lyrics blob locally so recipient sees them instantly.
   const lyricsCache = {};
   for (const s of songs) {
     if (s.type !== "live") continue;
     const cached = getCachedLyrics(s.id);
     if (cached?.lyrics) {
-      // Keep only what's actually used downstream
       lyricsCache[s.id] = {
         lyrics:           cached.lyrics,
         source:           cached.source,
@@ -961,37 +1002,48 @@ function encodeShareLink(folder, user, songs) {
     }
   }
 
+  const broadcastRoom = folder.broadcastRoom || newBroadcastRoom();
   const payload = {
-    v: 2,
+    v: 3,
     ownerName: user.username,
+    ownerId:   user.id,
     folderName: folder.name,
+    broadcastRoom,
     songs: songStubs,
     lyricsCache: Object.keys(lyricsCache).length ? lyricsCache : undefined,
   };
 
-  let json = JSON.stringify(payload);
-  let url  = `${base}?share=${_b64encode(json)}`;
+  const build = async (data) => {
+    const json = JSON.stringify(data);
+    const gz   = await _gzipEncode(json);
+    return gz ? `${base}?share=z${gz}` : `${base}?share=${_b64encode(json)}`;
+  };
 
-  // If the URL would be too long, drop the heavy lyricsCache field but keep
-  // the song stubs — recipient will re-fetch on import (slightly slower but
-  // the URL still works).
+  let url = await build(payload);
   if (url.length > SHARE_URL_MAX && payload.lyricsCache) {
-    delete payload.lyricsCache;
-    json = JSON.stringify(payload);
-    url  = `${base}?share=${_b64encode(json)}`;
-    console.warn(`[share] URL too long with cache (${url.length}); shared without embedded lyrics — recipient will re-fetch.`);
+    // Drop the heavy lyrics cache and re-encode
+    const lite = { ...payload, lyricsCache: undefined };
+    url = await build(lite);
+    console.warn(`[share] URL too long with cache — sharing without embedded lyrics (recipient will re-fetch).`);
   }
   return url;
 }
 
-function decodeShareFromUrl() {
+async function decodeShareFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const b64 = params.get("share");
-  if (!b64) return null;
+  const raw = params.get("share");
+  if (!raw) return null;
   try {
-    const padded = b64.replace(/-/g,"+").replace(/_/g,"/")
-                      + "===".slice(0, (4 - b64.length % 4) % 4);
-    const json = decodeURIComponent(escape(atob(padded)));
+    let json;
+    if (raw.startsWith("z")) {
+      json = await _gzipDecode(raw.slice(1));
+      if (!json) return null;
+    } else {
+      // Legacy path: plain base64 JSON
+      const padded = raw.replace(/-/g,"+").replace(/_/g,"/")
+                        + "===".slice(0, (4 - raw.length % 4) % 4);
+      json = decodeURIComponent(escape(atob(padded)));
+    }
     return JSON.parse(json);
   } catch { return null; }
 }
@@ -1141,10 +1193,12 @@ const db = {
       return data.map(r => ({
         id: r.id, name: r.name,
         songs: r.songs || [],
-        shareCode: r.share_token || null,
+        shareCode:         r.share_token        || null,
+        broadcastRoom:     r.broadcast_room     || null,
+        originalOwnerId:   r.original_owner_id  || null,
+        originalOwnerName: r.original_owner_name|| null,
       }));
     }
-    // Local: migrate old songIds → songs (resolve from cache)
     const fs = getUserFolders(user.id);
     return fs.map(f => {
       if (f.songs) return f;
@@ -1169,8 +1223,16 @@ const db = {
 
   async updateFolder(user, folder) {
     if (HAS_SUPABASE) {
+      const patch = {
+        name:                 folder.name,
+        songs:                folder.songs,
+        share_token:          folder.shareCode || null,
+        broadcast_room:       folder.broadcastRoom     || null,
+        original_owner_id:    folder.originalOwnerId   || null,
+        original_owner_name:  folder.originalOwnerName || null,
+      };
       const { error } = await sb.from("folders")
-        .update({ name: folder.name, songs: folder.songs, share_token: folder.shareCode })
+        .update(patch)
         .eq("id", folder.id).eq("user_id", user.id);
       if (error) console.error(error);
       return;
@@ -1407,11 +1469,18 @@ function SettingsModal({ onClose, showToast }) {
   );
 }
 
-function ShareModal({folder, user, onClose, showToast, folderSongs}) {
-  const shareUrl = React.useMemo(
-    () => encodeShareLink(folder, user, folderSongs || []),
-    [folder, user, folderSongs]
-  );
+function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoom}) {
+  const [shareUrl, setShareUrl] = React.useState("Generating link…");
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const room = folder.broadcastRoom || newBroadcastRoom();
+      if (!folder.broadcastRoom && onPersistRoom) onPersistRoom(folder.id, room);
+      const url = await encodeShareLink({ ...folder, broadcastRoom: room }, user, folderSongs || []);
+      if (alive) setShareUrl(url);
+    })();
+    return () => { alive = false; };
+  }, [folder, user, folderSongs]);
 
   const copy = () => {
     navigator.clipboard.writeText(shareUrl)
@@ -1743,7 +1812,8 @@ function ChordButton({ song }) {
 }
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
-function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong}) {
+function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,
+  isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -1854,8 +1924,19 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <button onClick={onBack} title="Back"
               className="text-violet-400 hover:text-violet-300 text-lg flex-shrink-0 px-1">←</button>
             <div className="flex-1 min-w-0">
-              <h1 className="text-sm sm:text-xl font-bold text-white truncate leading-tight">{song.title}</h1>
-              <div className="text-xs text-gray-500 truncate">🎤 {song.artist}</div>
+              <h1 className="text-sm sm:text-xl font-bold text-white truncate leading-tight flex items-center gap-1.5">
+                <span className="truncate">{song.title}</span>
+                {(isBroadcasting || (broadcastModerator && followingBroadcast)) && (
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                )}
+              </h1>
+              <div className="text-xs text-gray-500 truncate">
+                🎤 {song.artist}
+                {broadcastModerator && followingBroadcast && (
+                  <span className="ml-2 text-red-400">· Following {broadcastModerator.name}</span>
+                )}
+                {isBroadcasting && <span className="ml-2 text-red-400">· 🔴 Live</span>}
+              </div>
             </div>
             {/* Desktop actions inline */}
             {!isMobile && (
@@ -1919,71 +2000,14 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           )}
         </div>
 
-        {/* Source bar — wraps onto a second row on mobile if needed */}
-        <div className="px-3 sm:px-5 py-1.5 sm:py-2 border-b border-[#1a1a2a] flex items-center flex-wrap gap-1.5 sm:gap-3 flex-shrink-0 overflow-x-hidden">
+        {/* Source bar — minimal: script toggle + autoscroll only */}
+        <div className="px-3 sm:px-5 py-1.5 sm:py-2 border-b border-[#1a1a2a] flex items-center gap-2 flex-shrink-0">
           {nativeScript && (
             <div className="script-toggle">
               <div onClick={()=>setScript("roman")} className={`script-opt ${script==="roman"?"active":""}`}>{isMobile?"Aa":"Romanized"}</div>
               <div onClick={()=>setScript("native")} className={`script-opt ${script==="native"?"active":""}`}>{isMobile?"அ":"Native"}</div>
             </div>
           )}
-
-          {/* Source switcher — full on desktop, collapsed dropdown on mobile */}
-          {!isMobile && (
-            <>
-              <span className="text-xs text-gray-600">Source:</span>
-              {lyricsData?.source && (
-                <span className="text-xs px-2 py-1 rounded-lg bg-violet-900/30 text-violet-300 border border-violet-700/30 font-medium">
-                  ✓ {lyricsData.source}
-                </span>
-              )}
-              {!loading && !switching && otherSources.map(src => (
-                <button key={src} onClick={()=>switchSource(src)}
-                  className="text-xs px-2 py-1 rounded-lg border border-[#2e2e44] text-gray-500 hover:text-gray-300 hover:border-gray-500 transition-all">
-                  Try {src}
-                </button>
-              ))}
-              {nativeScript && script === "roman" && (
-                romanizing
-                  ? <span className="text-xs text-gray-500 flex items-center gap-1 ml-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>Enhancing…</span>
-                  : googleRoman
-                    ? <button onClick={()=>setPreferLocal(v=>!v)}
-                        title="Toggle between Google's smart output and rule-based phonetic output"
-                        className={`text-xs ml-1 px-2 py-0.5 rounded-md border transition-all ${preferLocal?"text-gray-400 border-[#2e2e44] hover:border-gray-500":"text-violet-400 border-violet-700/40 hover:bg-violet-600/10"}`}>
-                        {preferLocal ? "📝 Phonetic" : "✨ Smart"}
-                      </button>
-                    : <span className="text-xs text-gray-600 ml-1">· basic</span>
-              )}
-            </>
-          )}
-          {isMobile && lyricsData?.source && (
-            <div className="relative">
-              <button onClick={()=>setShowSourceMenu(v=>!v)}
-                className="text-xs px-2 py-1 rounded-lg bg-violet-900/30 text-violet-300 border border-violet-700/30 font-medium flex items-center gap-1">
-                {lyricsData.source} ▾
-              </button>
-              {showSourceMenu && (
-                <div className="absolute left-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-40">
-                  {otherSources.map(src => (
-                    <button key={src} onClick={()=>{switchSource(src);setShowSourceMenu(false);}}
-                      className="w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-violet-600/20 first:rounded-t-xl last:rounded-b-xl">
-                      Try {src}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {switching && <span className="text-xs text-gray-500 flex items-center gap-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/></span>}
-
-          {/* Mobile-only: transliteration engine toggle */}
-          {isMobile && nativeScript && script === "roman" && googleRoman && !romanizing && (
-            <button onClick={()=>setPreferLocal(v=>!v)} title="Toggle Smart ↔ Phonetic"
-              className={`text-xs px-2 py-1 rounded-md border transition-all ${preferLocal?"text-gray-400 border-[#2e2e44]":"text-violet-400 border-violet-700/40"}`}>
-              {preferLocal ? "📝" : "✨"}
-            </button>
-          )}
-
           <div className="ml-auto"><AutoScrollControl scrollRef={scrollRef}/></div>
         </div>
 
@@ -2249,20 +2273,55 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
   );
 }
 
-function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong}) {
+function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
+  canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
+  broadcastModerator, followingBroadcast, onLeaveBroadcast}) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
         <div className="flex items-center gap-3">
           <button onClick={onBack} title="Back" className="text-violet-400 hover:text-violet-300 text-lg">←</button>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base sm:text-xl font-bold text-white truncate">📁 {folder.name}</h2>
-            <p className="text-xs text-gray-500 mt-0.5">{songs.length} song{songs.length!==1?"s":""}</p>
+            <h2 className="text-base sm:text-xl font-bold text-white truncate flex items-center gap-2">
+              <span className="truncate">📁 {folder.name}</span>
+              {(isBroadcasting || broadcastModerator) && (
+                <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" title={isBroadcasting ? "You're broadcasting" : `${broadcastModerator.name} is broadcasting`} />
+              )}
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {songs.length} song{songs.length!==1?"s":""}
+              {broadcastModerator && !isBroadcasting && (
+                <span className="ml-2 text-red-400">· 📡 {broadcastModerator.name} is broadcasting</span>
+              )}
+              {isBroadcasting && <span className="ml-2 text-red-400">· 🔴 You are live</span>}
+            </p>
           </div>
+
+          {/* Broadcast controls */}
+          {canBroadcast && !isBroadcasting && (
+            <button onClick={onStartBroadcast}
+              title="Start broadcasting — your song picks will sync to anyone who shared this folder"
+              className="text-xs px-3 py-1.5 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-600/10 transition-all flex-shrink-0">
+              📡 <span className="hidden sm:inline">Start</span> Broadcast
+            </button>
+          )}
+          {canBroadcast && isBroadcasting && (
+            <button onClick={onStopBroadcast}
+              className="text-xs px-3 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 hover:bg-red-600/30 transition-all flex-shrink-0 animate-pulse">
+              ⏹ Stop
+            </button>
+          )}
+          {!canBroadcast && broadcastModerator && followingBroadcast && (
+            <button onClick={onLeaveBroadcast}
+              className="text-xs px-3 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-gray-500 transition-all flex-shrink-0">
+              Leave
+            </button>
+          )}
+
           <button onClick={onAddCustom}
             title="Add your own lyrics"
             className="text-xs px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all flex-shrink-0">
-            ＋ Add Lyrics
+            ＋ <span className="hidden sm:inline">Add</span> Lyrics
           </button>
         </div>
       </div>
@@ -2722,6 +2781,16 @@ function App() {
   const [pendingShare,setPendingShare]     = React.useState(null);
   const [toast,showToast]                  = useToast();
 
+  // ─── Broadcast state ──────────────────────────────────────────────
+  // isBroadcasting: I'm the moderator pushing songs to a Realtime channel
+  // broadcastModerator: someone ELSE is broadcasting in the folder I'm viewing
+  // broadcastChannelRef: live Supabase Realtime channel for the current folder
+  // followingBroadcast: I'm an audience member auto-switching when moderator does
+  const [isBroadcasting, setIsBroadcasting] = React.useState(false);
+  const [broadcastModerator, setBroadcastModerator] = React.useState(null);
+  const [followingBroadcast, setFollowingBroadcast] = React.useState(false);
+  const broadcastChannelRef = React.useRef(null);
+
   // Restore session on first load
   React.useEffect(() => {
     (async () => {
@@ -2753,10 +2822,12 @@ function App() {
     })();
   }, [user?.id]);
 
-  // Detect ?share= URL on first load
+  // Detect ?share= URL on first load (now async — gzip decode)
   React.useEffect(() => {
-    const data = decodeShareFromUrl();
-    if (data) setPendingShare(data);
+    (async () => {
+      const data = await decodeShareFromUrl();
+      if (data) setPendingShare(data);
+    })();
   }, []);
 
   // Once a user is logged in AND we have a pending share, open the import modal
@@ -2911,6 +2982,10 @@ function App() {
 
     const newF = await db.createFolder(user, `${entry.folderName} (${entry.ownerName})`);
     newF.songs = songs;
+    // Carry the broadcast room + original owner forward so audience can follow
+    if (entry.broadcastRoom) newF.broadcastRoom    = entry.broadcastRoom;
+    if (entry.ownerId)       newF.originalOwnerId  = entry.ownerId;
+    if (entry.ownerName)     newF.originalOwnerName = entry.ownerName;
     await db.updateFolder(user, newF);
     setFolders(f => [...f, newF]);
     setPendingShare(null);
@@ -2934,10 +3009,101 @@ function App() {
     setActiveFolderId(resolved);
     setView("song");
     setSidebarCollapsed(true);
+
+    // If I'm broadcasting, push this song (+ cached lyrics) to the audience
+    if (isBroadcasting && broadcastChannelRef.current) {
+      const cachedLyrics = getCachedLyrics(song.id) || undefined;
+      broadcastChannelRef.current.send({
+        type: "broadcast",
+        event: "song_change",
+        payload: { song, cachedLyrics, broadcaster: user?.username },
+      });
+    }
   };
 
   const activeFolder = folders.find(f => f.id === activeFolderId);
   const folderSongs  = activeFolder ? activeFolder.songs : [];
+
+  // ─── Broadcast helpers ────────────────────────────────────────────
+  // Am I allowed to broadcast on this folder? Only the original owner can.
+  const canBroadcast = !!activeFolder && (
+    !activeFolder.originalOwnerId || activeFolder.originalOwnerId === user?.id
+  );
+
+  // Subscribe to the broadcast channel for the active folder
+  React.useEffect(() => {
+    if (!activeFolder?.broadcastRoom || !HAS_SUPABASE) return;
+    const channel = sb.channel(`jambook-bc:${activeFolder.broadcastRoom}`, {
+      config: { broadcast: { self: false } },
+    });
+    broadcastChannelRef.current = channel;
+    channel
+      .on("broadcast", { event: "moderator_start" }, ({ payload }) => {
+        setBroadcastModerator(payload || { name: "Someone" });
+      })
+      .on("broadcast", { event: "moderator_stop" }, () => {
+        setBroadcastModerator(null);
+        setFollowingBroadcast(false);
+      })
+      .on("broadcast", { event: "song_change" }, ({ payload }) => {
+        // Audience receives: cache lyrics if provided, then open the song
+        if (!payload?.song) return;
+        if (payload.cachedLyrics) {
+          try { setCachedLyrics(payload.song.id, payload.cachedLyrics); } catch {}
+        }
+        if (!isBroadcastingRef.current) {
+          // Switch to following mode automatically
+          setFollowingBroadcast(true);
+          cacheSong(payload.song);
+          setActiveSong(payload.song);
+          setView("song");
+        }
+      })
+      .subscribe();
+    return () => {
+      try { sb.removeChannel(channel); } catch {}
+      broadcastChannelRef.current = null;
+      setBroadcastModerator(null);
+      setFollowingBroadcast(false);
+    };
+  }, [activeFolder?.broadcastRoom]);
+
+  // Ref-mirror of isBroadcasting so the channel callback closures see latest
+  const isBroadcastingRef = React.useRef(false);
+  React.useEffect(() => { isBroadcastingRef.current = isBroadcasting; }, [isBroadcasting]);
+
+  // Start broadcasting (moderator only) — assigns a broadcastRoom if missing
+  const startBroadcast = async () => {
+    if (!activeFolder || !canBroadcast) return;
+    let folder = activeFolder;
+    if (!folder.broadcastRoom) {
+      const updated = { ...folder, broadcastRoom: newBroadcastRoom() };
+      setFolders(fs => fs.map(x => x.id === folder.id ? updated : x));
+      try { await db.updateFolder(user, updated); } catch {}
+      folder = updated;
+      // Trigger re-subscribe by waiting one tick (effect will pick up new room)
+      await new Promise(r => setTimeout(r, 50));
+    }
+    setIsBroadcasting(true);
+    const channel = broadcastChannelRef.current;
+    if (channel) {
+      channel.send({ type: "broadcast", event: "moderator_start", payload: { name: user.username } });
+    }
+    showToast("Broadcasting started · your song picks will sync");
+  };
+
+  const stopBroadcast = async () => {
+    setIsBroadcasting(false);
+    const channel = broadcastChannelRef.current;
+    if (channel) {
+      channel.send({ type: "broadcast", event: "moderator_stop", payload: {} });
+    }
+    showToast("Broadcast stopped");
+  };
+
+  const leaveBroadcast = () => {
+    setFollowingBroadcast(false);
+  };
 
   // Boot splash while restoring session
   if (bootLoading) {
@@ -2981,6 +3147,10 @@ function App() {
             activeFolder={activeFolder} folderSongs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolderId)}
             onEditSong={(s, currentLyrics)=>openEditSong(activeFolderId, s, currentLyrics)}
+            isBroadcasting={isBroadcasting}
+            broadcastModerator={broadcastModerator}
+            followingBroadcast={followingBroadcast}
+            onLeaveBroadcast={leaveBroadcast}
           />
         )}
         {view==="folder"&&activeFolder&&(
@@ -2991,6 +3161,13 @@ function App() {
             onBack={()=>{setView("search");setActiveFolderId(null);}}
             onAddCustom={()=>openAddCustom(activeFolder.id)}
             onEditSong={(s)=>openEditSong(activeFolder.id, s)}
+            canBroadcast={canBroadcast}
+            isBroadcasting={isBroadcasting}
+            onStartBroadcast={startBroadcast}
+            onStopBroadcast={stopBroadcast}
+            broadcastModerator={broadcastModerator}
+            followingBroadcast={followingBroadcast}
+            onLeaveBroadcast={leaveBroadcast}
           />
         )}
       </main>
@@ -3013,6 +3190,14 @@ function App() {
           folderSongs={shareTarget.songs || []}
           onClose={()=>setShareTarget(null)}
           showToast={showToast}
+          onPersistRoom={async (folderId, room) => {
+            // Save the newly-generated broadcastRoom back to the folder
+            const target = folders.find(f => f.id === folderId);
+            if (!target) return;
+            const updated = { ...target, broadcastRoom: room };
+            setFolders(f => f.map(x => x.id === folderId ? updated : x));
+            try { await db.updateFolder(user, updated); } catch {}
+          }}
         />
       )}
       {showImport && (
