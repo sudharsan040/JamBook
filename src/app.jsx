@@ -1950,7 +1950,8 @@ function ChordButton({ song }) {
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
 function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
-  canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount}) {
+  canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
+  onBroadcastSourceChange, lyricsRefreshTick}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -1991,14 +1992,22 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
       else        { setNotFound(true); }
       setLoading(false);
     });
-  }, [song.id, song.customLyrics, song.customLyricsRoman]);
+  }, [song.id, song.customLyrics, song.customLyricsRoman, lyricsRefreshTick]);
 
-  // Switch source manually
+  // Switch source manually. If I'm the moderator, push the new lyrics to followers.
   const switchSource = async (src) => {
     setSwitching(true); setGoogleRoman(null);
     const result = await fetchLyricsFromSource(song.artist, song.title, src);
-    if (result) { setLyricsData(result); setCachedLyrics(song.id, result); setNotFound(false); }
-    else        { setNotFound(true); setLyricsData(null); }
+    if (result) {
+      setLyricsData(result);
+      setCachedLyrics(song.id, result);
+      setNotFound(false);
+      if (isBroadcasting && onBroadcastSourceChange) {
+        onBroadcastSourceChange(song.id, result);
+      }
+    } else {
+      setNotFound(true); setLyricsData(null);
+    }
     setSwitching(false);
   };
 
@@ -2775,30 +2784,36 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         </div>
       )}
 
+      {/* Static nav strip — visible whenever a search is active.
+          Lives OUTSIDE the scroll container so it doesn't scroll away.
+          Horizontally scrollable so a long folder list never wraps on mobile. */}
+      {hasQuery && (
+        <div className="flex-shrink-0 px-3 sm:px-6 py-2 border-b border-[#1a1a2a] bg-[#0f0f14] overflow-x-auto whitespace-nowrap chip-strip">
+          <div className="flex items-center gap-2 max-w-3xl mx-auto">
+            <button onClick={()=>setQuery("")}
+              className="text-xs px-2.5 py-1 rounded-full border border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-300 transition-all flex-shrink-0 font-medium">
+              ← Home
+            </button>
+            {folders.length > 0 && (
+              <>
+                <span className="text-xs text-gray-700 flex-shrink-0">·</span>
+                {folders.map(f => (
+                  <button key={f.id} onClick={()=>onSelectFolder(f.id)}
+                    title={`Open ${f.name}`}
+                    className="text-xs px-2.5 py-1 rounded-full border border-[#2a2a3e] text-gray-300 hover:border-violet-500 hover:text-violet-300 transition-all flex-shrink-0 max-w-[150px] truncate">
+                    📁 {f.name}
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className={`flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 ${isMobile?"pb-28":""}`}>
         {/* Live results — only when searching */}
         {hasQuery && (
           <div ref={resultsTopRef} className="max-w-3xl mx-auto mb-8">
-            {/* Quick-jump back to folders + folder chips for routing after add */}
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <button onClick={()=>setQuery("")}
-                className="text-xs px-2.5 py-1 rounded-full border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-300 transition-all">
-                ← Home
-              </button>
-              {folders.length > 0 && (
-                <>
-                  <span className="text-xs text-gray-700">·</span>
-                  <span className="text-xs text-gray-600">Jump to folder:</span>
-                  {folders.slice(0, 6).map(f => (
-                    <button key={f.id} onClick={()=>onSelectFolder(f.id)}
-                      title={`Open ${f.name}`}
-                      className="text-xs px-2.5 py-1 rounded-full border border-[#2a2a3e] text-gray-300 hover:border-violet-500 hover:text-violet-300 transition-all max-w-[140px] truncate">
-                      📁 {f.name}
-                    </button>
-                  ))}
-                </>
-              )}
-            </div>
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">🎵 Search Results</span>
               {loading
@@ -3070,6 +3085,7 @@ function App() {
   const [viewerCount, setViewerCount] = React.useState(0);
   const [pendingBroadcastId, setPendingBroadcastId] = React.useState(null);
   const [subscribedRoom, setSubscribedRoom] = React.useState(null);
+  const [lyricsRefreshTick, setLyricsRefreshTick] = React.useState(0);
   const broadcastChannelRef = React.useRef(null);
 
   // Restore session on first load
@@ -3407,6 +3423,13 @@ function App() {
           setView("song");
         }
       })
+      .on("broadcast", { event: "source_change" }, ({ payload }) => {
+        // Moderator switched lyrics source — write the fresh blob into cache and
+        // bump the refresh tick so LiveSongView re-reads. Ignore if I'm broadcasting.
+        if (!payload?.songId || !payload?.lyricsData || isBroadcastingRef.current) return;
+        try { setCachedLyrics(payload.songId, payload.lyricsData); } catch {}
+        setLyricsRefreshTick(t => t + 1);
+      })
       .on("broadcast", { event: "lyrics_update" }, ({ payload }) => {
         // Moderator edited a song's lyrics — patch any folder containing it + activeSong, refresh cache
         if (!payload?.songId || !payload?.patch || isBroadcastingRef.current) return;
@@ -3474,6 +3497,17 @@ function App() {
   const leaveBroadcast = () => {
     setFollowingBroadcast(false);
   };
+
+  // Pushed by LiveSongView's switchSource() when the moderator picks a different
+  // lyrics source — sends the freshly-fetched lyrics blob to every follower.
+  const broadcastSourceChange = React.useCallback((songId, lyricsData) => {
+    if (!isBroadcasting || !broadcastChannelRef.current) return;
+    broadcastChannelRef.current.send({
+      type: "broadcast",
+      event: "source_change",
+      payload: { songId, lyricsData },
+    });
+  }, [isBroadcasting]);
 
   // One-click start from the home-page folder menu: navigate + start once channel is ready
   const requestStartBroadcast = (folderId) => {
@@ -3555,6 +3589,8 @@ function App() {
             onStartBroadcast={startBroadcast}
             onStopBroadcast={stopBroadcast}
             viewerCount={viewerCount}
+            onBroadcastSourceChange={broadcastSourceChange}
+            lyricsRefreshTick={lyricsRefreshTick}
           />
         )}
         {view==="folder"&&activeFolder&&(
