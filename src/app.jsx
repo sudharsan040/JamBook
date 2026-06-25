@@ -1892,13 +1892,14 @@ function ChordButton({ song }) {
 }
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
-function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,
+function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
   const [switching,  setSwitching]  = React.useState(false);
   const [showFolderMenu, setFolderMenu] = React.useState(false);
+  const [showActionMenu, setShowActionMenu] = React.useState(false);
   const [script,     setScript]     = React.useState("roman"); // "roman" | "native"
   const [wasCached,  setWasCached]  = React.useState(false);
   const [googleRoman,setGoogleRoman]= React.useState(null);
@@ -2018,46 +2019,13 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 {isBroadcasting && <span className="ml-2 text-red-400">· 🔴 Live</span>}
               </div>
             </div>
-            {/* Desktop actions inline */}
-            {!isMobile && (
-              <div className="flex gap-1.5 flex-shrink-0">
-                {!isCustomSong && <ChordButton song={song} />}
-                {onEditSong && (
-                  <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")} title="Edit lyrics for this song (your account only)"
-                    className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">
-                    ✎ Edit
-                  </button>
-                )}
-                <div className="relative">
-                  <button onClick={()=>setFolderMenu(v=>!v)}
-                    className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁 Add</button>
-                  {showFolderMenu && (
-                    <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
-                      {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
-                      {folders.map(f=>(
-                        <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setFolderMenu(false);}}
-                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 first:rounded-t-xl last:rounded-b-xl transition-all">
-                          📁 {f.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Row 2 on mobile: action icons */}
-          {isMobile && (
-            <div className="flex gap-1.5 mt-2">
-              {!isCustomSong && <ChordButton song={song} />}
-              {onEditSong && (
-                <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")} title="Edit lyrics"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">✎</button>
-              )}
+            {/* Top-bar action buttons — desktop + mobile share the same layout now */}
+            <div className="flex gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+              {/* Add to folder */}
               <div className="relative">
-                <button onClick={()=>setFolderMenu(v=>!v)}
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁</button>
+                <button onClick={()=>{setFolderMenu(v=>!v); setShowActionMenu(false);}}
+                  title="Add to folder"
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁<span className="hidden sm:inline ml-1">Add</span></button>
                 {showFolderMenu && (
                   <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
                     {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
@@ -2070,14 +2038,70 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                   </div>
                 )}
               </div>
-              {hasQueue && (
+
+              {/* Share folder (only when viewing a song inside a folder) */}
+              {activeFolder && onShareFolder && (
+                <button onClick={()=>onShareFolder(activeFolder)}
+                  title="Share this folder"
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">↗<span className="hidden sm:inline ml-1">Share</span></button>
+              )}
+
+              {/* Session queue (mobile only) */}
+              {isMobile && hasQueue && (
                 <button onClick={()=>setShowQueue(true)} title="Session queue"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all ml-auto">
-                  ☰ {folderSongs.length} in queue
+                  className="text-xs px-2 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all">
+                  ☰ {folderSongs.length}
                 </button>
               )}
+
+              {/* Hamburger menu — Source · Edit · Chords */}
+              <div className="relative">
+                <button onClick={()=>{setShowActionMenu(v=>!v); setFolderMenu(false);}}
+                  title="More actions"
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">⋮</button>
+                {showActionMenu && (
+                  <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-56 overflow-hidden">
+                    {/* Source switcher */}
+                    {lyricsData?.source && (
+                      <div className="px-4 py-2 border-b border-[#2e2e44]">
+                        <div className="text-xs text-gray-500 mb-1.5">Source</div>
+                        <div className="text-xs text-violet-300 font-medium mb-2">✓ {lyricsData.source}</div>
+                        {!switching && otherSources.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {otherSources.map(src => (
+                              <button key={src} onClick={()=>{switchSource(src);setShowActionMenu(false);}}
+                                className="text-xs px-2 py-1 rounded-md border border-[#2e2e44] text-gray-400 hover:text-violet-300 hover:border-violet-500 transition-all">
+                                Try {src}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {switching && <div className="text-xs text-gray-500 flex items-center gap-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>Switching…</div>}
+                      </div>
+                    )}
+
+                    {/* Edit Lyrics */}
+                    {onEditSong && (
+                      <button onClick={()=>{onEditSong(song, displayText || lyricsData?.lyrics || ""); setShowActionMenu(false);}}
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/15 hover:text-amber-300 transition-all border-b border-[#2e2e44]">
+                        ✎ Edit Lyrics
+                      </button>
+                    )}
+
+                    {/* Find Chords */}
+                    {!isCustomSong && (
+                      <a href={ugLink(song.title, song.artist || song.singer || "")}
+                        target="_blank" rel="noopener"
+                        onClick={()=>setShowActionMenu(false)}
+                        className="block px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/15 hover:text-amber-300 transition-all">
+                        🎸 Find Chords ↗
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Source bar — minimal: script toggle + autoscroll only */}
@@ -3227,6 +3251,7 @@ function App() {
             activeFolder={activeFolder} folderSongs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolderId)}
             onEditSong={(s, currentLyrics)=>openEditSong(activeFolderId, s, currentLyrics)}
+            onShareFolder={setShareTarget}
             isBroadcasting={isBroadcasting}
             broadcastModerator={broadcastModerator}
             followingBroadcast={followingBroadcast}
