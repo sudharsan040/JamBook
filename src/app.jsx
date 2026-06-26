@@ -3406,7 +3406,8 @@ function App() {
         payload: { song, cachedLyrics, broadcaster: user?.username },
       });
       // Update monitor presence so the home page's "currently playing" stays fresh
-      const monEntry = resolved && monitorChannelsRef.current[resolved];
+      const resolvedFolder = folders.find(f => f.id === resolved);
+      const monEntry = resolvedFolder?.broadcastRoom && monitorChannelsRef.current[resolvedFolder.broadcastRoom];
       if (monEntry?.channel) {
         try {
           monEntry.channel.track({
@@ -3434,36 +3435,59 @@ function App() {
   React.useEffect(() => {
     if (!HAS_SUPABASE || !user || user.isGuest) return;
 
-    const desired = new Map(); // folderId -> broadcastRoom
-    for (const f of folders) if (f.broadcastRoom) desired.set(f.id, f.broadcastRoom);
+    // Group folder ids by their broadcast_room. Two folders with the SAME room
+    // (e.g. you imported your own share link) must share ONE channel — Supabase
+    // dedupes channels by topic, and re-attaching `.on()` after `.subscribe()`
+    // throws "cannot add presence callbacks after subscribe()".
+    const roomToFolderIds = new Map(); // room -> Set<folderId>
+    for (const f of folders) {
+      if (!f.broadcastRoom) continue;
+      if (!roomToFolderIds.has(f.broadcastRoom)) roomToFolderIds.set(f.broadcastRoom, new Set());
+      roomToFolderIds.get(f.broadcastRoom).add(f.id);
+    }
 
-    // Add missing / changed
-    for (const [fid, room] of desired) {
-      const existing = monitorChannelsRef.current[fid];
-      if (existing?.room === room) continue;
-      if (existing) { try { sb.removeChannel(existing.channel); } catch {} }
+    // Add missing rooms
+    for (const room of roomToFolderIds.keys()) {
+      if (monitorChannelsRef.current[room]) continue;
 
-      const ch = sb.channel(`jambook-bc-mon:${room}`, {
-        config: { presence: { key: `${user.id}_${fid}` } },
+      const topic = `jambook-bc-mon:${room}`;
+      // Defensive: nuke any orphan channel for this topic (e.g. from an
+      // ErrorBoundary remount). Calling `.on()` on a channel that's already
+      // been `.subscribe()`d throws "cannot add presence callbacks after subscribe()".
+      try {
+        for (const c of sb.getChannels?.() || []) {
+          if (c.topic === `realtime:${topic}` || c.topic === topic) {
+            try { sb.removeChannel(c); } catch {}
+          }
+        }
+      } catch {}
+
+      const ch = sb.channel(topic, {
+        config: { presence: { key: user.id } },
       });
       ch.on("presence", { event: "sync" }, () => {
         const state = ch.presenceState();
-        const all = Object.values(state).flat();
-        const mod = all.find(p => p.role === "moderator");
+        const all   = Object.values(state).flat();
+        const mod   = all.find(p => p.role === "moderator");
+        const fids  = roomToFolderIds.get(room) || new Set();
         setLiveBroadcasts(prev => {
-          if (mod) {
-            return { ...prev, [fid]: { moderatorName: mod.name || "Someone", currentSong: mod.currentSong || null } };
+          const next = { ...prev };
+          let changed = false;
+          for (const fid of fids) {
+            if (mod) {
+              const nv = { moderatorName: mod.name || "Someone", currentSong: mod.currentSong || null };
+              if (JSON.stringify(next[fid]) !== JSON.stringify(nv)) { next[fid] = nv; changed = true; }
+            } else if (fid in next) {
+              delete next[fid]; changed = true;
+            }
           }
-          if (!(fid in prev)) return prev;
-          const next = { ...prev }; delete next[fid]; return next;
+          return changed ? next : prev;
         });
       });
       ch.subscribe(async (status) => {
         if (status !== "SUBSCRIBED") return;
-        // If this user is mid-broadcast on this exact folder, claim moderator
-        // presence on first track — otherwise the default viewer track would
-        // overwrite the moderator track we tried to set in startBroadcast.
-        const isModeratorForThis = isBroadcastingRef.current && activeFolderIdRef.current === fid;
+        const fids = roomToFolderIds.get(room) || new Set();
+        const isModeratorForThis = isBroadcastingRef.current && fids.has(activeFolderIdRef.current);
         if (isModeratorForThis) {
           await ch.track({
             role: "moderator", userId: user.id, name: user.username,
@@ -3473,20 +3497,27 @@ function App() {
           await ch.track({ role: "viewer", userId: user.id });
         }
       });
-      monitorChannelsRef.current[fid] = { channel: ch, room };
+      monitorChannelsRef.current[room] = { channel: ch };
     }
 
-    // Drop channels for folders we no longer have / no longer have a room
-    for (const fid of Object.keys(monitorChannelsRef.current)) {
-      if (!desired.has(fid)) {
-        try { sb.removeChannel(monitorChannelsRef.current[fid].channel); } catch {}
-        delete monitorChannelsRef.current[fid];
-        setLiveBroadcasts(prev => {
-          if (!(fid in prev)) return prev;
-          const next = { ...prev }; delete next[fid]; return next;
-        });
+    // Drop channels for rooms we no longer have
+    for (const room of Object.keys(monitorChannelsRef.current)) {
+      if (!roomToFolderIds.has(room)) {
+        try { sb.removeChannel(monitorChannelsRef.current[room].channel); } catch {}
+        delete monitorChannelsRef.current[room];
       }
     }
+
+    // Prune liveBroadcasts entries for folders that no longer exist
+    setLiveBroadcasts(prev => {
+      const valid = new Set(folders.map(f => f.id));
+      const next = { ...prev };
+      let changed = false;
+      for (const fid of Object.keys(next)) {
+        if (!valid.has(fid)) { delete next[fid]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
   }, [folders.map(f => `${f.id}:${f.broadcastRoom || ""}`).join("|"), user?.id]);
 
   // Tear down all monitor channels when the user signs out / changes
@@ -3597,7 +3628,7 @@ function App() {
       channel.send({ type: "broadcast", event: "moderator_start", payload: { name: user.username } });
     }
     // Announce on the monitor channel so the home page sees us as live
-    const monEntry = monitorChannelsRef.current[folder.id];
+    const monEntry = folder.broadcastRoom && monitorChannelsRef.current[folder.broadcastRoom];
     if (monEntry?.channel) {
       try {
         await monEntry.channel.track({
@@ -3616,11 +3647,10 @@ function App() {
       channel.send({ type: "broadcast", event: "moderator_stop", payload: {} });
     }
     // Demote ourselves on the monitor channel so home page indicators clear
-    if (activeFolderId) {
-      const monEntry = monitorChannelsRef.current[activeFolderId];
-      if (monEntry?.channel) {
-        try { await monEntry.channel.track({ role: "viewer", userId: user.id }); } catch {}
-      }
+    const stopFolder = folders.find(f => f.id === activeFolderId);
+    const monEntry = stopFolder?.broadcastRoom && monitorChannelsRef.current[stopFolder.broadcastRoom];
+    if (monEntry?.channel) {
+      try { await monEntry.channel.track({ role: "viewer", userId: user.id }); } catch {}
     }
     showToast("Broadcast stopped");
   };
