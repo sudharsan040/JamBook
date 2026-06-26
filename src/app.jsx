@@ -80,8 +80,45 @@ async function searchSongs(query, language = "All") {
       language: lang || "Unknown",
     });
   }
-  console.log(`[JamBook] iTunes search "${term}": ${all.length} raw → ${out.length} unique songs`);
-  return out;
+
+  // ── Relevance filter ─────────────────────────────────────────────────
+  // iTunes returns lots of fuzzy matches — searching "Maro Maro Tamil"
+  // returns Justin Bieber etc. because "Tamil" matches some random field.
+  // Strict pass: every query token must appear in title OR artist. If that
+  // empties the list we relax to half-match. Then sort by relevance score.
+  const queryTokens = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
+  let filtered = out;
+  if (queryTokens.length) {
+    const queryLower = query.toLowerCase().trim();
+    const scoreSong = (song) => {
+      const title  = (song.title  || "").toLowerCase();
+      const artist = (song.artist || "").toLowerCase();
+      const album  = (song.album  || "").toLowerCase();
+      let titleHits = 0, artistHits = 0, albumHits = 0;
+      let titleArtistHits = 0;
+      for (const t of queryTokens) {
+        const inT = title.includes(t),  inA = artist.includes(t),  inAl = album.includes(t);
+        if (inT)  titleHits++;
+        if (inA)  artistHits++;
+        if (inAl) albumHits++;
+        if (inT || inA) titleArtistHits++;
+      }
+      let score = titleHits * 5 + artistHits * 2 + albumHits * 1;
+      if (title === queryLower)         score += 100;     // exact title match
+      else if (title.startsWith(queryLower)) score += 50; // title starts with query
+      return { score, titleArtistHits };
+    };
+
+    const scored = out.map(s => ({ song: s, ...scoreSong(s) }));
+    const strict = scored.filter(x => x.titleArtistHits === queryTokens.length);
+    const half   = scored.filter(x => x.titleArtistHits >= Math.ceil(queryTokens.length / 2));
+    filtered = (strict.length ? strict : half)
+      .sort((a, b) => b.score - a.score)
+      .map(x => x.song);
+  }
+
+  console.log(`[JamBook] iTunes search "${term}": ${all.length} raw → ${out.length} unique → ${filtered.length} relevant`);
+  return filtered;
 }
 
 // ── Strip noise from titles for better API matching ───────────────────
@@ -2337,12 +2374,19 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
   const currentLyrics    = scriptTab === "native" ? nativeLyrics    : romanLyrics;
   const setCurrentLyrics = scriptTab === "native" ? setNativeLyrics : setRomanLyrics;
 
-  // Generate Tanglish from native using built-in mapper (one-click helper)
-  const autoFillTanglish = () => {
-    if (!nativeLyrics.trim()) return;
-    const out = transliterateLocal(nativeLyrics);
-    setRomanLyrics(out);
-    setScriptTab("roman");
+  // Generate romanized text from native via Google (any Indic script) →
+  // falls back to local rule-based mapper if Google is unreachable.
+  const [autoFillBusy, setAutoFillBusy] = React.useState(false);
+  const autoFillTanglish = async () => {
+    if (!nativeLyrics.trim() || autoFillBusy) return;
+    setAutoFillBusy(true);
+    try {
+      const result = await transliterateBest(nativeLyrics);
+      setRomanLyrics(result.text);
+      setScriptTab("roman");
+    } finally {
+      setAutoFillBusy(false);
+    }
   };
 
   const insertAtCursor = (snippet) => {
@@ -2441,10 +2485,10 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
               </label>
               <div className="flex items-center gap-2">
                 {scriptTab === "roman" && nativeLyrics.trim() && (
-                  <button type="button" onClick={autoFillTanglish}
-                    title="Auto-fill from native lyrics using the built-in transliterator"
-                    className="text-xs text-violet-400 hover:text-violet-300 underline-offset-2 hover:underline">
-                    ↻ Auto-fill
+                  <button type="button" onClick={autoFillTanglish} disabled={autoFillBusy}
+                    title="Auto-fill from native lyrics (Google romanization for any Indic script)"
+                    className="text-xs text-violet-400 hover:text-violet-300 underline-offset-2 hover:underline disabled:opacity-50 disabled:cursor-wait">
+                    {autoFillBusy ? "Translating…" : "↻ Auto-fill"}
                   </button>
                 )}
                 <div className="script-toggle">
