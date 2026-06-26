@@ -3113,8 +3113,13 @@ function App() {
   // the lightweight monitor channels we keep open for every folder that has a
   // broadcastRoom, so the home page can show "🔴 LIVE" without entering the folder.
   const [liveBroadcasts, setLiveBroadcasts] = React.useState({});
-  const broadcastChannelRef = React.useRef(null);
-  const monitorChannelsRef  = React.useRef({}); // { [folderId]: { channel, room } }
+  const broadcastChannelRef    = React.useRef(null);
+  // One global presence channel for cross-folder live detection. Moderators
+  // track { role:"moderator", room, currentSong }; everyone else tracks viewer.
+  const broadcastPresenceRef   = React.useRef(null);
+  const liveModeratorsRef      = React.useRef({}); // { [room]: { name, currentSong } }
+  const foldersRef             = React.useRef([]);
+  const [broadcastSync, setBroadcastSync] = React.useState(0);
 
   // Restore session on first load
   React.useEffect(() => {
@@ -3405,13 +3410,14 @@ function App() {
         event: "song_change",
         payload: { song, cachedLyrics, broadcaster: user?.username },
       });
-      // Update monitor presence so the home page's "currently playing" stays fresh
+      // Update presence so the home page's "currently playing" stays fresh
       const resolvedFolder = folders.find(f => f.id === resolved);
-      const monEntry = resolvedFolder?.broadcastRoom && monitorChannelsRef.current[resolvedFolder.broadcastRoom];
-      if (monEntry?.channel) {
+      const presCh = broadcastPresenceRef.current;
+      if (presCh && resolvedFolder?.broadcastRoom) {
         try {
-          monEntry.channel.track({
+          presCh.track({
             role: "moderator", userId: user.id, name: user.username,
+            room: resolvedFolder.broadcastRoom,
             currentSong: song,
           });
         } catch {}
@@ -3428,106 +3434,84 @@ function App() {
     !activeFolder.originalOwnerId || activeFolder.originalOwnerId === user?.id
   );
 
-  // ─── Lightweight monitor channels — one per folder with a broadcastRoom.
-  // These exist so the home page can show "🔴 LIVE" without the user being in
-  // the folder. The moderator tracks { role: "moderator", currentSong } on the
-  // monitor channel when broadcasting; everyone else tracks { role: "viewer" }.
+  // ─── One global presence channel — moderators announce themselves; every
+  // other client lurks and watches the presence state. Replaces the per-folder
+  // monitor channels (which kept colliding on shared broadcast_rooms).
+  React.useEffect(() => { foldersRef.current = folders; }, [folders]);
+
   React.useEffect(() => {
     if (!HAS_SUPABASE || !user || user.isGuest) return;
 
-    // Group folder ids by their broadcast_room. Two folders with the SAME room
-    // (e.g. you imported your own share link) must share ONE channel — Supabase
-    // dedupes channels by topic, and re-attaching `.on()` after `.subscribe()`
-    // throws "cannot add presence callbacks after subscribe()".
-    const roomToFolderIds = new Map(); // room -> Set<folderId>
-    for (const f of folders) {
-      if (!f.broadcastRoom) continue;
-      if (!roomToFolderIds.has(f.broadcastRoom)) roomToFolderIds.set(f.broadcastRoom, new Set());
-      roomToFolderIds.get(f.broadcastRoom).add(f.id);
-    }
-
-    // Add missing rooms
-    for (const room of roomToFolderIds.keys()) {
-      if (monitorChannelsRef.current[room]) continue;
-
-      const topic = `jambook-bc-mon:${room}`;
-      // Defensive: nuke any orphan channel for this topic (e.g. from an
-      // ErrorBoundary remount). Calling `.on()` on a channel that's already
-      // been `.subscribe()`d throws "cannot add presence callbacks after subscribe()".
-      try {
-        for (const c of sb.getChannels?.() || []) {
-          if (c.topic === `realtime:${topic}` || c.topic === topic) {
-            try { sb.removeChannel(c); } catch {}
-          }
+    // Defensive: drop any stale instance of this topic before creating fresh.
+    try {
+      for (const c of sb.getChannels?.() || []) {
+        if (c.topic === "realtime:jambook-broadcast-presence") {
+          try { sb.removeChannel(c); } catch {}
         }
-      } catch {}
-
-      const ch = sb.channel(topic, {
-        config: { presence: { key: user.id } },
-      });
-      ch.on("presence", { event: "sync" }, () => {
-        const state = ch.presenceState();
-        const all   = Object.values(state).flat();
-        const mod   = all.find(p => p.role === "moderator");
-        const fids  = roomToFolderIds.get(room) || new Set();
-        setLiveBroadcasts(prev => {
-          const next = { ...prev };
-          let changed = false;
-          for (const fid of fids) {
-            if (mod) {
-              const nv = { moderatorName: mod.name || "Someone", currentSong: mod.currentSong || null };
-              if (JSON.stringify(next[fid]) !== JSON.stringify(nv)) { next[fid] = nv; changed = true; }
-            } else if (fid in next) {
-              delete next[fid]; changed = true;
-            }
-          }
-          return changed ? next : prev;
-        });
-      });
-      ch.subscribe(async (status) => {
-        if (status !== "SUBSCRIBED") return;
-        const fids = roomToFolderIds.get(room) || new Set();
-        const isModeratorForThis = isBroadcastingRef.current && fids.has(activeFolderIdRef.current);
-        if (isModeratorForThis) {
-          await ch.track({
-            role: "moderator", userId: user.id, name: user.username,
-            currentSong: activeSongRef.current || null,
-          });
-        } else {
-          await ch.track({ role: "viewer", userId: user.id });
-        }
-      });
-      monitorChannelsRef.current[room] = { channel: ch };
-    }
-
-    // Drop channels for rooms we no longer have
-    for (const room of Object.keys(monitorChannelsRef.current)) {
-      if (!roomToFolderIds.has(room)) {
-        try { sb.removeChannel(monitorChannelsRef.current[room].channel); } catch {}
-        delete monitorChannelsRef.current[room];
       }
-    }
+    } catch {}
 
-    // Prune liveBroadcasts entries for folders that no longer exist
-    setLiveBroadcasts(prev => {
-      const valid = new Set(folders.map(f => f.id));
-      const next = { ...prev };
-      let changed = false;
-      for (const fid of Object.keys(next)) {
-        if (!valid.has(fid)) { delete next[fid]; changed = true; }
-      }
-      return changed ? next : prev;
+    const ch = sb.channel("jambook-broadcast-presence", {
+      config: { presence: { key: user.id } },
     });
-  }, [folders.map(f => `${f.id}:${f.broadcastRoom || ""}`).join("|"), user?.id]);
+    ch.on("presence", { event: "sync" }, () => {
+      const state = ch.presenceState();
+      const mods  = {}; // room -> { name, currentSong }
+      for (const arr of Object.values(state)) {
+        for (const p of arr) {
+          if (p.role === "moderator" && p.room) {
+            mods[p.room] = { name: p.name || "Someone", currentSong: p.currentSong || null };
+          }
+        }
+      }
+      liveModeratorsRef.current = mods;
+      setBroadcastSync(t => t + 1);
+    });
+    ch.subscribe(async (status) => {
+      if (status !== "SUBSCRIBED") return;
+      const fid = activeFolderIdRef.current;
+      const folder = fid ? foldersRef.current.find(f => f.id === fid) : null;
+      if (isBroadcastingRef.current && folder?.broadcastRoom) {
+        await ch.track({
+          role: "moderator", userId: user.id, name: user.username,
+          room: folder.broadcastRoom,
+          currentSong: activeSongRef.current || null,
+        });
+      } else {
+        await ch.track({ role: "viewer", userId: user.id });
+      }
+    });
+    broadcastPresenceRef.current = ch;
 
-  // Tear down all monitor channels when the user signs out / changes
-  React.useEffect(() => () => {
-    for (const v of Object.values(monitorChannelsRef.current)) {
-      try { sb.removeChannel(v.channel); } catch {}
-    }
-    monitorChannelsRef.current = {};
-    setLiveBroadcasts({});
+    return () => {
+      try { sb.removeChannel(ch); } catch {}
+      broadcastPresenceRef.current = null;
+      liveModeratorsRef.current = {};
+      setLiveBroadcasts({});
+    };
   }, [user?.id]);
+
+  // Derive liveBroadcasts whenever folders OR presence state changes
+  React.useEffect(() => {
+    const mods = liveModeratorsRef.current;
+    const next = {};
+    for (const f of folders) {
+      if (f.broadcastRoom && mods[f.broadcastRoom]) {
+        next[f.id] = {
+          moderatorName: mods[f.broadcastRoom].name,
+          currentSong:   mods[f.broadcastRoom].currentSong,
+        };
+      }
+    }
+    setLiveBroadcasts(prev => {
+      const prevKeys = Object.keys(prev), nextKeys = Object.keys(next);
+      if (prevKeys.length !== nextKeys.length) return next;
+      for (const k of nextKeys) {
+        if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) return next;
+      }
+      return prev;
+    });
+  }, [folders, broadcastSync]);
 
   // Subscribe to the broadcast channel for the active folder
   React.useEffect(() => {
@@ -3627,12 +3611,13 @@ function App() {
     if (channel) {
       channel.send({ type: "broadcast", event: "moderator_start", payload: { name: user.username } });
     }
-    // Announce on the monitor channel so the home page sees us as live
-    const monEntry = folder.broadcastRoom && monitorChannelsRef.current[folder.broadcastRoom];
-    if (monEntry?.channel) {
+    // Announce on the global presence channel so the home page sees us as live
+    const presCh = broadcastPresenceRef.current;
+    if (presCh && folder.broadcastRoom) {
       try {
-        await monEntry.channel.track({
+        await presCh.track({
           role: "moderator", userId: user.id, name: user.username,
+          room: folder.broadcastRoom,
           currentSong: activeSong || null,
         });
       } catch {}
@@ -3646,11 +3631,10 @@ function App() {
     if (channel) {
       channel.send({ type: "broadcast", event: "moderator_stop", payload: {} });
     }
-    // Demote ourselves on the monitor channel so home page indicators clear
-    const stopFolder = folders.find(f => f.id === activeFolderId);
-    const monEntry = stopFolder?.broadcastRoom && monitorChannelsRef.current[stopFolder.broadcastRoom];
-    if (monEntry?.channel) {
-      try { await monEntry.channel.track({ role: "viewer", userId: user.id }); } catch {}
+    // Demote ourselves on the presence channel so home page indicators clear
+    const presCh = broadcastPresenceRef.current;
+    if (presCh) {
+      try { await presCh.track({ role: "viewer", userId: user.id }); } catch {}
     }
     showToast("Broadcast stopped");
   };
