@@ -3460,8 +3460,18 @@ function App() {
       });
       ch.subscribe(async (status) => {
         if (status !== "SUBSCRIBED") return;
-        // Default presence: a viewer. The moderator overwrites this in startBroadcast.
-        await ch.track({ role: "viewer", userId: user.id });
+        // If this user is mid-broadcast on this exact folder, claim moderator
+        // presence on first track — otherwise the default viewer track would
+        // overwrite the moderator track we tried to set in startBroadcast.
+        const isModeratorForThis = isBroadcastingRef.current && activeFolderIdRef.current === fid;
+        if (isModeratorForThis) {
+          await ch.track({
+            role: "moderator", userId: user.id, name: user.username,
+            currentSong: activeSongRef.current || null,
+          });
+        } else {
+          await ch.track({ role: "viewer", userId: user.id });
+        }
       });
       monitorChannelsRef.current[fid] = { channel: ch, room };
     }
@@ -3563,6 +3573,11 @@ function App() {
   // Ref-mirror of isBroadcasting so the channel callback closures see latest
   const isBroadcastingRef = React.useRef(false);
   React.useEffect(() => { isBroadcastingRef.current = isBroadcasting; }, [isBroadcasting]);
+  // Mirrors used by the monitor-channel subscribe callback to avoid stale closures
+  const activeFolderIdRef = React.useRef(null);
+  const activeSongRef     = React.useRef(null);
+  React.useEffect(() => { activeFolderIdRef.current = activeFolderId; }, [activeFolderId]);
+  React.useEffect(() => { activeSongRef.current     = activeSong;     }, [activeSong]);
 
   // Start broadcasting (moderator only) — assigns a broadcastRoom if missing
   const startBroadcast = async () => {
