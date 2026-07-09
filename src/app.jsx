@@ -733,12 +733,17 @@ async function _t2lSearch(query) {
 async function fetchFromTamil2Lyrics(artist, title) {
   if (!HAS_PROXY) throw new Error("proxy not configured");
 
-  // Try several query variants — search engines on WP can be picky
+  // Try several query variants — search engines on WP can be picky.
+  // Title-only goes FIRST: the site's WordPress search treats a multi-artist
+  // string (e.g. "A & B") as required terms that rarely appear verbatim in a
+  // post's credits, so the title+artist combo usually returns zero matches
+  // and just burns an extra proxy round-trip before falling back anyway —
+  // which under a slow network can push the whole lookup past its timeout.
   const cleanTitle = title.replace(/\(.+?\)/g, "").trim();
   const queries = [
-    cleanTitle + (artist ? " " + artist : ""), // "Moongil Thottam Shakthisree"
     cleanTitle,                                // "Moongil Thottam"
     cleanTitle.split(/\s+/).slice(0, 2).join(" "), // first 2 words "Moongil Thottam"
+    cleanTitle + (artist ? " " + artist : ""), // "Moongil Thottam Shakthisree"
   ].filter((q, i, a) => q && a.indexOf(q) === i); // dedupe + drop empties
 
   let foundUrl = null;
