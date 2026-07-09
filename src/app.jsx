@@ -756,34 +756,8 @@ async function fetchFromTamil2Lyrics(artist, title) {
   const pr = await fetchViaProxy(foundUrl);
   const pageHtml = await pr.text();
 
-  // Try multiple body extraction strategies — sites restructure constantly
-  let body = null;
-
-  // 1. Common WP content wrappers
-  const wrappers = [
-    /<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content|td_block_wrap|tdb-block-inner|article-content|content-area)[^"]*"[^>]*>([\s\S]*?)<\/article/i,
-    /<div[^>]*class="[^"]*(?:entry-content|post-content)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i,
-    /<article[^>]*>([\s\S]*?)<\/article>/i,
-    /<main[^>]*>([\s\S]*?)<\/main>/i,
-  ];
-  for (const re of wrappers) {
-    const m = pageHtml.match(re);
-    if (m && m[1] && m[1].length > 300) { body = m[1]; break; }
-  }
-
-  // 2. Last resort: take everything between </header> and <footer>
-  if (!body) {
-    const m = pageHtml.match(/<\/header>([\s\S]*?)<footer/i);
-    if (m && m[1] && m[1].length > 300) body = m[1];
-  }
-
-  if (!body) {
-    console.warn("[tamil2lyrics] parse fail. URL:", foundUrl, "HTML preview:", pageHtml.slice(0, 400));
-    throw new Error("parse fail");
-  }
-
   // Strip out <script>, <style>, ads, and other noise BEFORE turning HTML into text
-  const cleaned = body
+  const stripNoiseTags = (html) => html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<ins[\s\S]*?<\/ins>/gi, "")              // adsbygoogle <ins> blocks
@@ -799,7 +773,7 @@ async function fetchFromTamil2Lyrics(artist, title) {
     .trim();
 
   // Filter out ad-script leftovers, metadata, and section labels from each line
-  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?|A[-+−–—]\s*$|Copy\s*$|Print\s*$|Share\s*$|Save\s*$|Bookmark\s*$|Font\s*Size\s*$|Increase\s*Font|Decrease\s*Font|Toggle\s*Font|Click\s*here|Read\s*more|Show\s*more|Show\s*less)/i;
+  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?|A[-+−–—]\s*$|Copy\s*$|Print\s*$|Share\s*$|Save\s*$|Bookmark\s*$|Font\s*Size\s*$|Increase\s*Font|Decrease\s*Font|Toggle\s*Font|Click\s*here|Read\s*more|Show\s*more|Show\s*less|(?:Male|Female|Duet|Both|Chorus|Verse|Pre[- ]?Chorus|Bridge|Intro|Outro)\s+Part\s*$)/i;
   // Boilerplate phrases that appear ANYWHERE in a line — kill the whole line
   const NOISE_CONTAINS_RE = /Song\s+Lyrics\s+from|Tamil\s+film\s+starring|in\s+a\s+lead\s+role|song\s+was\s+sung\s+by|music\s+is\s+composed\s+by|Lyrics\s+works?\s+are\s+penned|penned\s+by\s+lyricist|Lyrics?\s+penned\s+by|directed\s+by|produced\s+by|released\s+in\s+\d{4}|adsbygoogle|googletag|window\.googletag|©\s*\d{4}|All\s+rights\s+reserved|tamil2lyrics\.com|Subscribe\s+to|Follow\s+us/i;
   const isMostlyTamil  = (line) => {
@@ -815,33 +789,68 @@ async function fetchFromTamil2Lyrics(artist, title) {
     return true;
   }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
-  // Try to split into Tamil section and Tanglish section using h-tag markers
-  const fullText = toText(cleaned);
-
-  // Strategy 1: split by section header lines
-  // Lines that are JUST "English", "Tanglish", "Romanized" — markers between sections
-  const sectionSplitRe = /^\s*(?:English|Tanglish|Romanized|Translation)\s*$/im;
-  const sections = fullText.split(/^\s*(?:English|Tanglish|Romanized|Translation)\s*$/im);
-
-  // Pick the section with most Latin chars = Tanglish
-  // Pick the section with most Tamil chars = Native
   let tanglishText = "", nativeText = "";
-  for (const sec of sections) {
-    const latin = (sec.match(/[a-zA-Z]/g) || []).length;
-    const tamil = (sec.match(/[஀-௿]/g) || []).length;
-    if (latin > (tanglishText.match(/[a-zA-Z]/g)?.length || 0) && latin > tamil)  tanglishText = sec;
-    if (tamil > (nativeText.match(/[஀-௿]/g)?.length   || 0) && tamil > latin)   nativeText   = sec;
-  }
-  // Fallback if no clear split — try filtering by line content
-  if (!tanglishText) {
-    tanglishText = fullText.split("\n").filter(l => !isMostlyTamil(l)).join("\n");
-  }
-  if (!nativeText) {
-    nativeText = fullText.split("\n").filter(l => isMostlyTamil(l) || !l.trim()).join("\n");
-  }
 
-  tanglishText = cleanLines(tanglishText);
-  nativeText   = cleanLines(nativeText);
+  // Strategy A (current site redesign): English (Tanglish) and Tamil lyrics
+  // are rendered as two sibling `data-t2l-lyrics-body` tab panels instead of
+  // being split apart by header-marker text. Pull each panel directly by its
+  // data attribute so we never touch the surrounding tabs/copy/print/share
+  // button chrome — this is what broke when the site added those buttons.
+  const t2lPanel = (tab) => {
+    const openRe = new RegExp('<div[^>]*data-t2l-tab-panel="' + tab + '"[^>]*data-t2l-lyrics-body[^>]*>', "i");
+    const om = openRe.exec(pageHtml);
+    if (!om) return null;
+    const rest = pageHtml.slice(om.index + om[0].length);
+    const stopRes = [/<div[^>]*data-t2l-tab-panel="/i, /print:hidden/i, /<\/article/i];
+    let end = rest.length;
+    for (const re of stopRes) { const sm = re.exec(rest); if (sm && sm.index < end) end = sm.index; }
+    return rest.slice(0, end);
+  };
+  const englishPanel = t2lPanel("english");
+  const tamilPanel   = t2lPanel("tamil");
+  if (englishPanel) tanglishText = cleanLines(toText(stripNoiseTags(englishPanel)));
+  if (tamilPanel)   nativeText   = cleanLines(toText(stripNoiseTags(tamilPanel)));
+
+  // Strategy B (fallback for older/other templates): guess a body wrapper,
+  // then split on "English/Tanglish/Romanized" header-marker lines.
+  if (!tanglishText) {
+    let body = null;
+    const wrappers = [
+      /<div[^>]*class="[^"]*(?:entry-content|post-content|td-post-content|td_block_wrap|tdb-block-inner|article-content|content-area)[^"]*"[^>]*>([\s\S]*?)<\/article/i,
+      /<div[^>]*class="[^"]*(?:entry-content|post-content)[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i,
+      /<article[^>]*>([\s\S]*?)<\/article>/i,
+      /<main[^>]*>([\s\S]*?)<\/main>/i,
+    ];
+    for (const re of wrappers) {
+      const m = pageHtml.match(re);
+      if (m && m[1] && m[1].length > 300) { body = m[1]; break; }
+    }
+    // Last resort: take everything between </header> and <footer>
+    if (!body) {
+      const m = pageHtml.match(/<\/header>([\s\S]*?)<footer/i);
+      if (m && m[1] && m[1].length > 300) body = m[1];
+    }
+    if (!body) {
+      console.warn("[tamil2lyrics] parse fail. URL:", foundUrl, "HTML preview:", pageHtml.slice(0, 400));
+      throw new Error("parse fail");
+    }
+
+    const fullText = toText(stripNoiseTags(body));
+    const sections = fullText.split(/^\s*(?:English|Tanglish|Romanized|Translation)\s*$/im);
+    // Pick the section with most Latin chars = Tanglish; most Tamil chars = Native
+    for (const sec of sections) {
+      const latin = (sec.match(/[a-zA-Z]/g) || []).length;
+      const tamil = (sec.match(/[஀-௿]/g) || []).length;
+      if (latin > (tanglishText.match(/[a-zA-Z]/g)?.length || 0) && latin > tamil)  tanglishText = sec;
+      if (tamil > (nativeText.match(/[஀-௿]/g)?.length   || 0) && tamil > latin)   nativeText   = sec;
+    }
+    // Fallback if no clear split — try filtering by line content
+    if (!tanglishText) tanglishText = fullText.split("\n").filter(l => !isMostlyTamil(l)).join("\n");
+    if (!nativeText)   nativeText   = fullText.split("\n").filter(l => isMostlyTamil(l) || !l.trim()).join("\n");
+
+    tanglishText = cleanLines(tanglishText);
+    nativeText   = cleanLines(nativeText);
+  }
 
   const latinChars = (tanglishText.match(/[a-zA-Z]/g) || []).length;
   if (latinChars < 50 || tanglishText.length < 80) throw new Error("not tanglish");
