@@ -8,6 +8,7 @@ const CURATED = [];
 const TAG_CONFIG    = {male:{label:"Male",class:"tag-male"},female:{label:"Female",class:"tag-female"},chorus:{label:"Chorus",class:"tag-chorus"},duet:{label:"Duet",class:"tag-duet"},humming:{label:"Humming",class:"tag-humming"}};
 const LANGUAGES     = ["All","Tamil","Hindi","Telugu","Malayalam","Kannada","English"];
 const SCROLL_SPEEDS = [{label:"Slow",key:"slow",px:18},{label:"Medium",key:"medium",px:45},{label:"Fast",key:"fast",px:90}];
+const FONT_SCALES   = [0.85, 1, 1.15, 1.35, 1.6, 2, 2.5]; // 1 (index 1) = default 100%
 const LANG_COLORS   = {Tamil:"bg-orange-900/30 text-orange-400",Hindi:"bg-blue-900/30 text-blue-400",Telugu:"bg-green-900/30 text-green-400",Malayalam:"bg-pink-900/30 text-pink-400",Kannada:"bg-yellow-900/30 text-yellow-400",English:"bg-teal-900/30 text-teal-400"};
 const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc2626","#4f46e5","#0d9488"];
 
@@ -2078,6 +2079,29 @@ function AutoScrollControl({scrollRef}) {
   );
 }
 
+// Lyrics/chords text-size stepper — for presenting on a big screen. Only
+// scales the stanza/chord text (via the --lyrics-scale CSS var), nothing else.
+function FontSizeControl({ scale, onChange }) {
+  const idx = Math.max(0, FONT_SCALES.indexOf(scale));
+  const step = (delta) => {
+    const next = FONT_SCALES[idx + delta];
+    if (next !== undefined) onChange(next);
+  };
+  return (
+    <div className="flex items-center gap-1 sm:gap-1.5 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-2 sm:px-3 py-1.5 sm:py-2">
+      <button onClick={()=>step(-1)} disabled={idx <= 0} title="Smaller text"
+        className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-white hover:bg-[#2a2a3e] disabled:opacity-30 disabled:cursor-not-allowed transition-all text-xs font-bold">
+        A−
+      </button>
+      <span className="text-xs text-gray-400 font-medium w-10 text-center tabular-nums">{Math.round(scale * 100)}%</span>
+      <button onClick={()=>step(1)} disabled={idx >= FONT_SCALES.length - 1} title="Bigger text"
+        className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-white hover:bg-[#2a2a3e] disabled:opacity-30 disabled:cursor-not-allowed transition-all text-sm font-bold">
+        A+
+      </button>
+    </div>
+  );
+}
+
 // ─── Queue Panel ──────────────────────────────────────────────────────
 // Split a folder's songs into {pending, completed}, keeping each song's
 // ORIGINAL position (i) so the number badge stays stable across both groups.
@@ -2126,7 +2150,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
 
 function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
-  broadcastModerator}) {
+  broadcastModerator,collapsed,onToggleCollapse}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
   const [queueSearch, setQueueSearch] = React.useState("");
@@ -2134,10 +2158,24 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
   // full (unfiltered) pending list so a search doesn't shrink its pool.
   const visiblePending   = pending.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
   const visibleCompleted = completed.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
+
+  if (collapsed) return (
+    <div className="sidebar-transition w-12 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col items-center py-3 gap-3">
+      <button onClick={onToggleCollapse} title="Expand session queue"
+        className="text-gray-500 hover:text-violet-400 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">‹</button>
+      <div className="w-px h-4 bg-[#2a2a3a]"/>
+      <div className="text-xs text-gray-600 [writing-mode:vertical-rl] rotate-180">{folder.name}</div>
+    </div>
+  );
+
   return (
-    <div className="w-52 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col h-full">
+    <div className="sidebar-transition w-52 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col h-full">
       <div className="px-4 py-4 border-b border-[#1a1a2a]">
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Session Queue</div>
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Session Queue</div>
+          <button onClick={onToggleCollapse} title="Collapse session queue"
+            className="text-gray-600 hover:text-gray-300 text-xl w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all flex-shrink-0 -mt-1">›</button>
+        </div>
         <div className="text-sm font-semibold text-violet-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
 
@@ -2222,7 +2260,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
 }
 
 // ─── Curated Song View ────────────────────────────────────────────────
-function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted}) {
+function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse}) {
   const [showChords,setShowChords]   = React.useState(true);
   const [script,setScript]           = React.useState("roman");
   const [showFolderMenu,setFolderMenu] = React.useState(false);
@@ -2277,15 +2315,19 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
           {Object.entries(TAG_CONFIG).map(([k,v])=>(
             <span key={k} className={`text-xs px-2 py-0.5 rounded-full ${v.class}`}>{v.label}</span>
           ))}
-          <div className="ml-auto"><AutoScrollControl scrollRef={scrollRef}/></div>
+          <div className="ml-auto flex items-center gap-2">
+            <FontSizeControl scale={lyricsScale} onChange={onLyricsScaleChange}/>
+            <AutoScrollControl scrollRef={scrollRef}/>
+          </div>
         </div>
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-1" style={{"--lyrics-scale":lyricsScale}}>
           {song.lines.map(line=>(
             <div key={line.id} className="lyric-line px-3 py-2 transition-all">
               {showChords&&<div className="mb-0.5"><ChordBadge chord={line.chord}/></div>}
               <div className="flex items-center gap-3">
                 <Tag type={line.tag}/>
-                <span className={`text-base leading-relaxed font-medium text-gray-100 ${script==="native"?"tamil-text":""}`}>
+                <span className={`leading-relaxed font-medium text-gray-100 ${script==="native"?"tamil-text":""}`}
+                  style={{fontSize:"calc(1rem * var(--lyrics-scale, 1))"}}>
                   {script==="native"?line.textNative:line.textRoman}
                 </span>
               </div>
@@ -2295,7 +2337,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         </div>
       </div>
       {activeFolder&&folderSongs&&folderSongs.length>0&&(
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted}/>
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse}/>
       )}
     </div>
   );
@@ -2319,7 +2361,8 @@ function ChordButton({ song }) {
 function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,onToggleCompleted,
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
-  onBroadcastSourceChange, lyricsRefreshTick}) {
+  onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
+  queueCollapsed, onToggleQueueCollapse}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -2556,7 +2599,10 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <div onClick={()=>setScript("native")} className={`script-opt ${script==="native"?"active":""}`}>{isMobile?"அ":"Native"}</div>
             </div>
           )}
-          <div className="ml-auto"><AutoScrollControl scrollRef={scrollRef}/></div>
+          <div className="ml-auto flex items-center gap-2">
+            <FontSizeControl scale={lyricsScale} onChange={onLyricsScaleChange}/>
+            <AutoScrollControl scrollRef={scrollRef}/>
+          </div>
         </div>
 
         {/* Lyrics body */}
@@ -2587,7 +2633,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             </div>
           )}
           {!loading && lyricsData?.lyrics && (
-            <div className="max-w-3xl mx-auto">
+            <div className="max-w-3xl mx-auto" style={{"--lyrics-scale":lyricsScale}}>
               {stanzas.map((stanza, i) => (
                 <div key={i} className="stanza">
                   {stanza.section && (
@@ -2620,6 +2666,8 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           onStopBroadcast={onStopBroadcast}
           viewerCount={viewerCount}
           broadcastModerator={broadcastModerator}
+          collapsed={queueCollapsed}
+          onToggleCollapse={onToggleQueueCollapse}
         />
       )}
 
@@ -3794,6 +3842,8 @@ function App() {
   const [activeSong,setActiveSong]         = React.useState(null);
   const [activeFolderId,setActiveFolderId] = React.useState(null);
   const [sidebarCollapsed,setSidebarCollapsed] = React.useState(false);
+  const [queueCollapsed,setQueueCollapsed] = React.useState(false);
+  const [lyricsScale,setLyricsScale]       = React.useState(1);
   const [folders,setFolders]               = React.useState([]);
   const [shareTarget,setShareTarget]       = React.useState(null);
   const [showImport,setShowImport]         = React.useState(false);
@@ -4322,6 +4372,8 @@ function App() {
             song={activeSong} onBack={()=>setView("search")} folders={folders} onAddToFolder={addToFolder}
             activeFolder={activeFolder} folderSongs={folderSongs} onOpenSong={s=>openSong(s,activeFolderId)}
             onToggleCompleted={toggleSongCompleted}
+            lyricsScale={lyricsScale} onLyricsScaleChange={setLyricsScale}
+            queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
           />
         )}
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
@@ -4342,6 +4394,8 @@ function App() {
             viewerCount={viewerCount}
             onBroadcastSourceChange={broadcastSourceChange}
             lyricsRefreshTick={lyricsRefreshTick}
+            lyricsScale={lyricsScale} onLyricsScaleChange={setLyricsScale}
+            queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
           />
         )}
         {view==="folder"&&activeFolder&&(

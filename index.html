@@ -58,9 +58,9 @@
   @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
   .mobile-search-bar { position:fixed; bottom:0; left:0; right:0; padding:10px 12px; background:rgba(13,13,24,.97); border-top:1px solid #1a1a2a; z-index:40; backdrop-filter:blur(8px); }
   .stanza          { margin-bottom:1rem; }
-  .stanza-line     { font-size:1.15rem; line-height:1.5; color:#e8e8f0; font-weight:500; }
+  .stanza-line     { font-size:calc(1.15rem * var(--lyrics-scale, 1)); line-height:1.5; color:#e8e8f0; font-weight:500; }
   .stanza-section  { font-size:.7rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.4rem; padding:3px 10px; border-radius:9999px; display:inline-block; }
-  .chord-line      { font-family:'Courier New',monospace; font-size:.95rem; font-weight:700; color:#a78bfa; letter-spacing:.05em; }
+  .chord-line      { font-family:'Courier New',monospace; font-size:calc(.95rem * var(--lyrics-scale, 1)); font-weight:700; color:#a78bfa; letter-spacing:.05em; }
   .shimmer     { background:linear-gradient(90deg,#1a1a2e 25%,#252540 50%,#1a1a2e 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:6px; }
   @keyframes shimmer { 0%{background-position:200% 0}100%{background-position:-200% 0} }
   .curated-badge { background:rgba(251,191,36,.15); color:#fbbf24; border:1px solid rgba(251,191,36,.3); }
