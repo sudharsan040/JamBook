@@ -2767,24 +2767,37 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
 // ─── Spin Wheel Modal ─────────────────────────────────────────────────
 // Pick 3–5 songs, spin a wheel, let it land on one and open its lyrics.
 function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
-  const [selectedIds, setSelectedIds] = React.useState([]);
+  const [numberInputs, setNumberInputs] = React.useState(["", "", "", "", ""]);
   const [phase, setPhase]             = React.useState("select"); // select | wheel
   const [rotation, setRotation]       = React.useState(0);
   const [spinning, setSpinning]       = React.useState(false);
   const [winner, setWinner]           = React.useState(null);
   const pendingWinnerRef = React.useRef(null);
 
-  const toggleSelect = (id) => {
-    setSelectedIds(prev => {
-      if (prev.includes(id)) return prev.filter(x => x !== id);
-      if (prev.length >= 5) return prev; // cap at 5
-      return [...prev, id];
-    });
-  };
+  // Map each song's displayed queue number back to the song itself, so typed
+  // numbers resolve to the right song regardless of completed songs being
+  // filtered out of `songs` (numbers stay tied to original queue position).
+  const numberToSong = React.useMemo(() => {
+    const map = {};
+    songs.forEach((s, i) => { map[numbers ? numbers[i] : i + 1] = s; });
+    return map;
+  }, [songs, numbers]);
+  const maxNumber = numbers && numbers.length ? Math.max(...numbers) : songs.length;
 
-  // No selection = spin the whole active queue; a selection must be 3-5 songs.
-  const pool        = selectedIds.length > 0 ? songs.filter(s => selectedIds.includes(s.id)) : songs;
-  const canSpin      = pool.length > 0 && (selectedIds.length === 0 || (selectedIds.length >= 3 && selectedIds.length <= 5));
+  const enteredRaw = numberInputs.map(v => v.trim()).filter(Boolean);
+  const matchedSongs = [];
+  { const seen = new Set();
+    for (const raw of enteredRaw) {
+      const s = numberToSong[parseInt(raw, 10)];
+      if (s && !seen.has(s.id)) { matchedSongs.push(s); seen.add(s.id); }
+    }
+  }
+  const invalidCount = enteredRaw.filter(raw => !numberToSong[parseInt(raw, 10)]).length;
+
+  // No valid numbers entered = spin the whole active queue; otherwise spin
+  // only among the songs whose numbers were typed in.
+  const pool        = matchedSongs.length > 0 ? matchedSongs : songs;
+  const canSpin      = pool.length > 0;
   const selectedSongs = pool;
   const n = selectedSongs.length || 1;
   const segAngle = 360 / n;
@@ -2829,38 +2842,32 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
         {phase === "select" && (
           <>
             <div className="text-lg font-bold text-white mb-1">🎡 Spin the Wheel</div>
-            <p className="text-xs text-gray-500 mb-4">Optionally pick 3–5 songs to narrow it down — leave everything unchecked to spin the whole active queue.</p>
-            <div className="space-y-1.5 max-h-72 overflow-y-auto mb-4">
-              {songs.map((s, i) => {
-                const checked  = selectedIds.includes(s.id);
-                const disabled = !checked && selectedIds.length >= 5;
-                const num = numbers ? numbers[i] : i + 1;
-                return (
-                  <label key={s.id}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-all ${checked ? "border-violet-500 bg-violet-600/10" : "border-[#2e2e44] hover:border-gray-500"} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
-                    <input type="checkbox" checked={checked} disabled={disabled}
-                      onChange={() => toggleSelect(s.id)} className="accent-violet-600"/>
-                    <span className="text-xs font-bold text-gray-600 w-4 flex-shrink-0">{num}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-gray-200 truncate">{s.title}</div>
-                      <div className="text-xs text-gray-500 truncate">{s.artist || s.singer}</div>
-                    </div>
-                  </label>
-                );
-              })}
+            <p className="text-xs text-gray-500 mb-3">Type up to 5 song numbers from the queue to narrow the spin — or leave them blank to spin the whole active queue. Numbers are 1–{maxNumber}.</p>
+            <div className="flex items-center gap-2 mb-3">
+              {numberInputs.map((val, idx) => (
+                <input key={idx} type="number" inputMode="numeric" value={val}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setNumberInputs(prev => prev.map((x, i) => i === idx ? v : x));
+                  }}
+                  placeholder="#"
+                  className="w-0 flex-1 min-w-0 text-center text-sm bg-[#1a1a2e] border border-[#2e2e44] rounded-lg py-2 text-gray-200 focus:border-violet-500 focus:outline-none"/>
+              ))}
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-gray-500">
-                {selectedIds.length === 0 ? `Spinning all ${songs.length}` : `${selectedIds.length}/5 selected`}
-              </span>
-              <div className="flex gap-2">
-                <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs border border-[#2e2e44] text-gray-400 hover:border-gray-500 transition-all">Cancel</button>
-                <button onClick={() => setPhase("wheel")} disabled={!canSpin}
-                  title={!canSpin ? "Pick at least 3 songs, or leave all unchecked" : ""}
-                  className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-700 transition-all">
-                  Next →
-                </button>
-              </div>
+            <div className="text-xs text-gray-500 mb-4">
+              {matchedSongs.length > 0
+                ? <>Spinning: <span className="text-gray-300">{matchedSongs.map(s => s.title).join(", ")}</span></>
+                : <>No numbers entered — spinning all {songs.length} active songs.</>}
+              {invalidCount > 0 && (
+                <div className="text-amber-500 mt-1">{invalidCount} number{invalidCount > 1 ? "s" : ""} didn't match a song in the queue.</div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs border border-[#2e2e44] text-gray-400 hover:border-gray-500 transition-all">Cancel</button>
+              <button onClick={() => setPhase("wheel")} disabled={!canSpin}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-700 transition-all">
+                Next →
+              </button>
             </div>
           </>
         )}
