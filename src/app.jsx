@@ -356,8 +356,9 @@ function useCatalogSearch({ query, mode, language }) {
   const [loading, setLoading]         = React.useState(false);
   const [artistId, setArtistId]       = React.useState(null);
   // 'jiosaavn' (primary — deep, real pagination, language-filterable) or
-  // 'spotify'/'itunes' (fallback pools — capped, client-paginated, no
-  // language filter since neither tags per-track language reliably).
+  // 'spotify'/'itunes' (fallback pools — capped, client-paginated; neither
+  // tags per-track language, so a language filter correctly excludes all of
+  // them rather than showing every language unfiltered).
   const [artistSource, setArtistSource] = React.useState(null);
   const [fallbackArtistPool, setFallbackArtistPool] = React.useState([]);
   const [artistNotFound, setArtistNotFound] = React.useState(false);
@@ -408,13 +409,9 @@ function useCatalogSearch({ query, mode, language }) {
           const { songs } = await fetchSpotifyArtistSongPool(sp.artist.id);
           if (songs.length) {
             setArtistSource("spotify"); setResultSource("spotify");
-            setFallbackArtistPool(songs);
-            setResults(songs.slice(0, ARTIST_PAGE_SIZE));
-            setArtistTotal(songs.length);
-            setArtistHasMore(songs.length > ARTIST_PAGE_SIZE);
+            setFallbackArtistPool(songs); // page-fetch effect below applies the language filter + slices
             setArtistNotFound(false); setCatalogError(false);
             setArtistId(null);
-            setLoading(false);
             return;
           }
           // Resolved an artist but got no songs (or the fetch itself failed) —
@@ -425,13 +422,9 @@ function useCatalogSearch({ query, mode, language }) {
         if (it.artist) {
           const { songs } = await fetchItunesArtistSongs(it.artist.id);
           setArtistSource("itunes"); setResultSource("itunes");
-          setFallbackArtistPool(songs);
-          setResults(songs.slice(0, ARTIST_PAGE_SIZE));
-          setArtistTotal(songs.length);
-          setArtistHasMore(songs.length > ARTIST_PAGE_SIZE);
+          setFallbackArtistPool(songs); // page-fetch effect below applies the language filter + slices
           setArtistNotFound(false); setCatalogError(false);
           setArtistId(null);
-          setLoading(false);
         } else {
           setResults([]); setArtistId(null); setArtistSource(null);
           const allFailed = js.failed && sp.failed && it.failed;
@@ -443,6 +436,20 @@ function useCatalogSearch({ query, mode, language }) {
     }, 600);
     return () => clearTimeout(debounceRef.current);
   }, [query, mode, language]);
+
+  // Neither Spotify nor iTunes expose a per-track language, so every song
+  // from those fallback pools is tagged "Unknown" (see mapSpotifyTrack /
+  // mapItunesTrack) — filtering by a specific language against that pool
+  // correctly yields nothing rather than silently showing every language,
+  // which is what actually happened before this was applied (e.g. an A.R.
+  // Rahman search with "Tamil" selected still showed his Hindi songs
+  // whenever JioSaavn — the only source that DOES tag language — wasn't
+  // the one serving the result).
+  const isFallbackPool = artistSource === "spotify" || artistSource === "itunes";
+  const filteredFallbackPool = React.useMemo(() => {
+    if (!isFallbackPool) return [];
+    return language === "All" ? fallbackArtistPool : fallbackArtistPool.filter(s => s.language === language);
+  }, [fallbackArtistPool, isFallbackPool, language]);
 
   // Fetches/derives the current visible page of the resolved artist's songs
   // — fires on first resolve AND whenever the user pages forward/back.
@@ -463,27 +470,28 @@ function useCatalogSearch({ query, mode, language }) {
         });
         setLoading(false);
       })();
-    } else if (artistSource === "spotify" || artistSource === "itunes") {
-      // Already have the full (capped) pool in memory — just slice locally.
-      setResults(fallbackArtistPool.slice(artistPage * ARTIST_PAGE_SIZE, (artistPage + 1) * ARTIST_PAGE_SIZE));
-      setArtistHasMore((artistPage + 1) * ARTIST_PAGE_SIZE < fallbackArtistPool.length);
+    } else if (isFallbackPool) {
+      // Already have the full (capped) pool in memory — filter by language,
+      // then just slice locally.
+      setResults(filteredFallbackPool.slice(artistPage * ARTIST_PAGE_SIZE, (artistPage + 1) * ARTIST_PAGE_SIZE));
+      setArtistHasMore((artistPage + 1) * ARTIST_PAGE_SIZE < filteredFallbackPool.length);
+      setLoading(false);
     }
-  }, [mode, artistSource, artistId, artistPage, language, fallbackArtistPool]);
+  }, [mode, artistSource, artistId, artistPage, language, isFallbackPool, filteredFallbackPool]);
 
   // Total pages is only knowable when there's no language filter thinning
-  // results out from under the raw page size (jiosaavn), or always for the
-  // fallback pools (spotify/itunes both skip language filtering) —
-  // otherwise fall back to artistHasMore to gate the Next button.
-  const isFallbackPool = artistSource === "spotify" || artistSource === "itunes";
+  // results out from under the raw page size (jiosaavn) — otherwise fall
+  // back to artistHasMore to gate the Next button. The fallback pools are
+  // always fully known up front, so their total is always computable.
   const artistTotalPages = isFallbackPool
-    ? Math.max(1, Math.ceil(fallbackArtistPool.length / ARTIST_PAGE_SIZE))
+    ? Math.max(1, Math.ceil(filteredFallbackPool.length / ARTIST_PAGE_SIZE))
     : (language === "All" ? Math.max(1, Math.ceil(artistTotal / ARTIST_PAGE_SIZE)) : null);
 
   return {
     results, loading, artistNotFound, catalogError, resultSource,
     artistActive: mode === "artist" && (!!artistId || isFallbackPool),
     artistPage, setArtistPage, artistTotalPages, artistHasMore,
-    artistTotal: isFallbackPool ? fallbackArtistPool.length : artistTotal,
+    artistTotal: isFallbackPool ? filteredFallbackPool.length : artistTotal,
   };
 }
 
