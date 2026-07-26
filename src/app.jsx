@@ -3657,7 +3657,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   // artist lookup (JioSaavn doesn't distinguish the two — a composer is just
   // an artist credit with a different role).
   const mode = filterBy === "movie" ? "movie" : (filterBy === "singer" || filterBy === "composer") ? "artist" : "title";
-  const { results: allResults, loading, artistNotFound, catalogError, resultSource, artistActive,
+  const { results: allResults, loading, artistNotFound, catalogError, artistActive,
           artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal } =
     useCatalogSearch({ query, mode, language });
 
@@ -3894,9 +3894,6 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                     ? `No artist found matching "${query.trim()}".`
                     : "No songs found."}
               </p>
-            )}
-            {!loading && liveResults.length > 0 && mode !== "title" && resultSource === "itunes" && (
-              <p className="text-xs text-amber-500/80 mb-2">via iTunes fallback — JioSaavn had nothing for this, so results may be less complete.</p>
             )}
             <div className="space-y-2">
               {liveResults.map(song=>(
@@ -4183,7 +4180,7 @@ function RequestSongPage({ token }) {
   const [addingId, setAddingId]     = React.useState(null);
   const [toast, showToast]          = useToast();
 
-  const { results, loading, artistNotFound, catalogError, resultSource, artistActive,
+  const { results, loading, artistNotFound, catalogError, artistActive,
           artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal } =
     useCatalogSearch({ query, mode: filterBy, language });
 
@@ -4274,9 +4271,6 @@ function RequestSongPage({ token }) {
                     ? `No songs found for that ${filterBy}.`
                     : "No songs found."}
             </p>
-          )}
-          {!loading && results.length > 0 && filterBy !== "title" && resultSource === "itunes" && (
-            <p className="text-xs text-amber-500/80 text-center mb-2">via iTunes fallback — JioSaavn had nothing for this, so results may be less complete.</p>
           )}
 
           <div className="space-y-2 mt-4">
