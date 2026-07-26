@@ -3718,9 +3718,16 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
 // Fully standalone — no login, no sidebar, no other app state. Reached via
 // ?request=<token>. Anyone with the link can search and add a song straight
 // into the moderator's live folder; they never see the rest of the app.
+const REQUEST_FILTERS = [
+  { value: "title",  label: "Song Title" },
+  { value: "movie",  label: "Movie" },
+  { value: "artist", label: "Artist" },
+];
+
 function RequestSongPage({ token }) {
   const [folder, setFolder]         = React.useState(undefined); // undefined=loading, null=not found
   const [query, setQuery]           = React.useState("");
+  const [filterBy, setFilterBy]     = React.useState("title");
   const [language, setLanguage]     = React.useState("Tamil");
   const [allResults, setAllResults] = React.useState([]);
   const [loading, setLoading]       = React.useState(false);
@@ -3747,6 +3754,20 @@ function RequestSongPage({ token }) {
     }, 600);
     return () => clearTimeout(debounceRef.current);
   }, [query, language]);
+
+  // "Movie"/"Artist" modes narrow the pool down to ONLY that movie's or
+  // artist's songs — the search itself still runs on the typed text (so
+  // "3" as a movie search still surfaces its songs), but results whose
+  // album/artist doesn't actually match the query get dropped.
+  const displayResults = React.useMemo(() => {
+    if (filterBy === "title") return allResults;
+    const q = query.trim().toLowerCase();
+    if (!q) return allResults;
+    return allResults.filter(s => {
+      const field = filterBy === "movie" ? (s.album || "") : (s.artist || s.singer || "");
+      return field.toLowerCase().includes(q);
+    });
+  }, [allResults, filterBy, query]);
 
   const handleAdd = async (song) => {
     setAddingId(song.id);
@@ -3789,8 +3810,16 @@ function RequestSongPage({ token }) {
 
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         <div className="max-w-xl mx-auto w-full">
+          <div className="flex flex-wrap gap-1.5 mb-2 justify-center">
+            {REQUEST_FILTERS.map(f => (
+              <button key={f.value} onClick={()=>setFilterBy(f.value)}
+                className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${filterBy===f.value?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
           <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus
-            placeholder="Search for a song…"
+            placeholder={filterBy==="movie" ? "Search by movie name…" : filterBy==="artist" ? "Search by artist name…" : "Search for a song…"}
             className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center focus:border-violet-500 focus:outline-none"/>
           <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
             {LANGUAGES.map(l => (
@@ -3802,12 +3831,16 @@ function RequestSongPage({ token }) {
           </div>
 
           {loading && <div className="flex justify-center py-8"><Spinner/></div>}
-          {!loading && query.trim().length >= 2 && allResults.length === 0 && (
-            <p className="text-xs text-gray-600 text-center py-6">No songs found.</p>
+          {!loading && query.trim().length >= 2 && displayResults.length === 0 && (
+            <p className="text-xs text-gray-600 text-center py-6">
+              {allResults.length > 0 && filterBy !== "title"
+                ? `No songs found for that ${filterBy}.`
+                : "No songs found."}
+            </p>
           )}
 
           <div className="space-y-2 mt-4">
-            {allResults.slice(0, 25).map(song => {
+            {displayResults.slice(0, 25).map(song => {
               const added = addedIds.has(song.id);
               return (
                 <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
