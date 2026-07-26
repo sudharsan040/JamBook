@@ -1969,15 +1969,63 @@ function AutoScrollControl({scrollRef}) {
 }
 
 // ─── Queue Panel ──────────────────────────────────────────────────────
-function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,
+// Split a folder's songs into {pending, completed}, keeping each song's
+// ORIGINAL position (i) so the number badge stays stable across both groups.
+function partitionCompleted(songs) {
+  const indexed = songs.map((song, i) => ({ song, i }));
+  return { pending: indexed.filter(x => !x.song.completed), completed: indexed.filter(x => x.song.completed) };
+}
+
+function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folderId }) {
+  return (
+    <div onClick={() => onOpenSong(song)}
+      className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${isActive ? "queue-song-active" : "border-[#1e1e2e] hover:bg-[#1a1a2e]"} ${song.completed ? "opacity-50" : ""}`}>
+      {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-violet-500 rounded-r-full"/>}
+      <div className="flex items-start justify-between gap-2 pl-1">
+        <div className="flex items-start gap-2 min-w-0">
+          <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive ? "text-violet-400" : "text-gray-700"}`}>{i + 1}</span>
+          <div className="min-w-0">
+            <div className={`text-xs font-semibold leading-tight truncate ${song.completed ? "line-through" : ""} ${isActive ? "text-violet-200" : "text-gray-300"}`}>{song.title}</div>
+            <div className="text-xs text-gray-600 truncate mt-0.5">{song.artist || song.singer}</div>
+            <span className={`text-xs px-1.5 py-0.5 rounded-full mt-1 inline-block ${isActive ? "curated-badge" : "text-gray-600 bg-gray-800"}`}>
+              {song.type === "curated" ? "⭐ Curated" : "🎵 Live"}
+            </span>
+          </div>
+        </div>
+        {onToggleCompleted && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleCompleted(folderId, song.id); }}
+            title={song.completed ? "Mark as not completed" : "Mark as completed"}
+            className={`w-5 h-5 mt-0.5 rounded-full border flex items-center justify-center flex-shrink-0 text-[10px] font-bold transition-all ${song.completed ? "bg-emerald-600 border-emerald-600 text-white" : "border-gray-600 text-transparent hover:border-emerald-500 hover:text-emerald-500/60"}`}>
+            ✓
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
   broadcastModerator}) {
+  const { pending, completed } = partitionCompleted(folderSongs);
+  const [showSpin, setShowSpin] = React.useState(false);
   return (
     <div className="w-52 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col h-full">
       <div className="px-4 py-4 border-b border-[#1a1a2a]">
         <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Session Queue</div>
         <div className="text-sm font-semibold text-violet-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
+
+        {/* Song Roulette — spin across selected songs, or the whole active queue if none picked */}
+        <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">🎡 Song Roulette</div>
+          <button onClick={()=>setShowSpin(true)} disabled={pending.length===0}
+            title={pending.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
+            className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+            🎲 Spin
+          </button>
+        </div>
 
         {/* Broadcast controls — only when the user owns the folder */}
         {canBroadcast && (
@@ -2017,40 +2065,32 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,
         )}
       </div>
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
-        {folderSongs.map((song,i)=>{
-          const isActive = song.id===activeSongId;
-          return (
-            <div key={song.id} onClick={()=>onOpenSong(song)}
-              className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${isActive?"queue-song-active":"border-[#1e1e2e] hover:bg-[#1a1a2e]"}`}>
-              {isActive&&<div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-violet-500 rounded-r-full"/>}
-              <div className="flex items-start gap-2 pl-1">
-                <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive?"text-violet-400":"text-gray-700"}`}>{i+1}</span>
-                <div className="min-w-0">
-                  <div className={`text-xs font-semibold leading-tight truncate ${isActive?"text-violet-200":"text-gray-300"}`}>{song.title}</div>
-                  <div className="text-xs text-gray-600 truncate mt-0.5">{song.artist||song.singer}</div>
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full mt-1 inline-block ${isActive?"curated-badge":"text-gray-600 bg-gray-800"}`}>
-                    {song.type==="curated"?"⭐ Curated":"🎵 Live"}
-                  </span>
-                </div>
-              </div>
+        {pending.map(({song,i})=>(
+          <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
+            onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id}/>
+        ))}
+        {completed.length > 0 && (
+          <>
+            <div className="text-xs text-gray-600 font-semibold uppercase tracking-wider pt-2 pb-1 px-1 border-t border-[#1a1a2a] mt-2">
+              ✓ Completed ({completed.length})
             </div>
-          );
-        })}
+            {completed.map(({song,i})=>(
+              <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
+                onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id}/>
+            ))}
+          </>
+        )}
       </div>
-      <div className="px-4 py-3 border-t border-[#1a1a2a]">
-        <div className="text-xs text-gray-600 font-semibold mb-2">Vocal Parts</div>
-        <div className="flex flex-wrap gap-1">
-          {Object.entries(TAG_CONFIG).map(([k,v])=>(
-            <span key={k} className={`text-xs px-2 py-0.5 rounded-full ${v.class}`}>{v.label}</span>
-          ))}
-        </div>
-      </div>
+      {showSpin && (
+        <SpinWheelModal songs={pending.map(x=>x.song)} numbers={pending.map(x=>x.i+1)} onClose={()=>setShowSpin(false)}
+          onOpenSong={(s)=>{ setShowSpin(false); onOpenSong(s); }}/>
+      )}
     </div>
   );
 }
 
 // ─── Curated Song View ────────────────────────────────────────────────
-function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong}) {
+function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted}) {
   const [showChords,setShowChords]   = React.useState(true);
   const [script,setScript]           = React.useState("roman");
   const [showFolderMenu,setFolderMenu] = React.useState(false);
@@ -2123,7 +2163,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         </div>
       </div>
       {activeFolder&&folderSongs&&folderSongs.length>0&&(
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong}/>
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted}/>
       )}
     </div>
   );
@@ -2144,7 +2184,7 @@ function ChordButton({ song }) {
 }
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
-function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,
+function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,onToggleCompleted,
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick}) {
@@ -2253,8 +2293,10 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
   const isMobile = useIsMobile();
   const [showQueue, setShowQueue] = React.useState(false);
+  const [showSpin, setShowSpin] = React.useState(false);
   const [showSourceMenu, setShowSourceMenu] = React.useState(false);
   const hasQueue = activeFolder && folderSongs && folderSongs.length > 0;
+  const pendingQueueSongs = hasQueue ? partitionCompleted(folderSongs).pending : [];
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -2438,7 +2480,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
       {/* Desktop inline queue panel */}
       {hasQueue && !isMobile && (
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong}
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted}
           canBroadcast={canBroadcast}
           isBroadcasting={isBroadcasting}
           onStartBroadcast={onStartBroadcast}
@@ -2459,6 +2501,14 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 <div className="text-sm font-semibold text-violet-300 truncate">📁 {activeFolder.name}</div>
               </div>
               <button onClick={()=>setShowQueue(false)} className="text-gray-500 hover:text-white text-xl">✕</button>
+            </div>
+            <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">🎡 Song Roulette</div>
+              <button onClick={()=>setShowSpin(true)} disabled={pendingQueueSongs.length===0}
+                title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
+                className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                🎲 Spin
+              </button>
             </div>
             {(canBroadcast || broadcastModerator) && (
               <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
@@ -2486,24 +2536,53 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               </div>
             )}
             <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
-              {folderSongs.map((s, i) => {
-                const isActive = s.id === song.id;
-                return (
+              {(() => {
+                const { pending, completed } = partitionCompleted(folderSongs);
+                const row = ({song: s, i}) => (
                   <div key={s.id} onClick={()=>{onOpenSong(s); setShowQueue(false);}}
-                    className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${isActive?"queue-song-active":"border-[#1e1e2e]"}`}>
-                    <div className="flex items-start gap-2">
-                      <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive?"text-violet-400":"text-gray-700"}`}>{i+1}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className={`text-sm font-semibold leading-tight truncate ${isActive?"text-violet-200":"text-gray-300"}`}>{s.title}</div>
-                        <div className="text-xs text-gray-600 truncate mt-0.5">{s.artist || s.singer}</div>
+                    className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${s.id===song.id?"queue-song-active":"border-[#1e1e2e]"} ${s.completed?"opacity-50":""}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 min-w-0">
+                        <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${s.id===song.id?"text-violet-400":"text-gray-700"}`}>{i+1}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-sm font-semibold leading-tight truncate ${s.completed?"line-through":""} ${s.id===song.id?"text-violet-200":"text-gray-300"}`}>{s.title}</div>
+                          <div className="text-xs text-gray-600 truncate mt-0.5">{s.artist || s.singer}</div>
+                        </div>
                       </div>
+                      {onToggleCompleted && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onToggleCompleted(activeFolder.id, s.id); }}
+                          title={s.completed ? "Mark as not completed" : "Mark as completed"}
+                          className={`w-5 h-5 mt-0.5 rounded-full border flex items-center justify-center flex-shrink-0 text-[10px] font-bold transition-all ${s.completed ? "bg-emerald-600 border-emerald-600 text-white" : "border-gray-600 text-transparent hover:border-emerald-500 hover:text-emerald-500/60"}`}>
+                          ✓
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
-              })}
+                return (
+                  <>
+                    {pending.map(row)}
+                    {completed.length > 0 && (
+                      <>
+                        <div className="text-xs text-gray-600 font-semibold uppercase tracking-wider pt-2 pb-1 px-1 border-t border-[#1a1a2a] mt-2">
+                          ✓ Completed ({completed.length})
+                        </div>
+                        {completed.map(row)}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </>
+      )}
+
+      {showSpin && (
+        <SpinWheelModal songs={pendingQueueSongs.map(x=>x.song)} numbers={pendingQueueSongs.map(x=>x.i+1)}
+          onClose={()=>setShowSpin(false)}
+          onOpenSong={(s)=>{ setShowSpin(false); onOpenSong(s); }}/>
       )}
     </div>
   );
@@ -2680,6 +2759,157 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
             {isEdit ? "Save Edits" : "Add Song"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Spin Wheel Modal ─────────────────────────────────────────────────
+// Pick 3–5 songs, spin a wheel, let it land on one and open its lyrics.
+function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
+  const [selectedIds, setSelectedIds] = React.useState([]);
+  const [phase, setPhase]             = React.useState("select"); // select | wheel
+  const [rotation, setRotation]       = React.useState(0);
+  const [spinning, setSpinning]       = React.useState(false);
+  const [winner, setWinner]           = React.useState(null);
+  const pendingWinnerRef = React.useRef(null);
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id);
+      if (prev.length >= 5) return prev; // cap at 5
+      return [...prev, id];
+    });
+  };
+
+  // No selection = spin the whole active queue; a selection must be 3-5 songs.
+  const pool        = selectedIds.length > 0 ? songs.filter(s => selectedIds.includes(s.id)) : songs;
+  const canSpin      = pool.length > 0 && (selectedIds.length === 0 || (selectedIds.length >= 3 && selectedIds.length <= 5));
+  const selectedSongs = pool;
+  const n = selectedSongs.length || 1;
+  const segAngle = 360 / n;
+
+  const startSpin = () => {
+    if (!canSpin || spinning) return;
+    setWinner(null);
+    const winnerIndex = Math.floor(Math.random() * n);
+    const midAngle    = winnerIndex * segAngle + segAngle / 2;
+    const currentMod  = ((rotation % 360) + 360) % 360;
+    const desiredMod  = (360 - midAngle) % 360;
+    let delta = desiredMod - currentMod;
+    if (delta < 0) delta += 360;
+    pendingWinnerRef.current = selectedSongs[winnerIndex];
+    setSpinning(true);
+    setRotation(r => r + 5 * 360 + delta); // several full spins + land on winner
+  };
+
+  const handleTransitionEnd = (e) => {
+    if (e.propertyName !== "transform" || !spinning) return;
+    setSpinning(false);
+    const w = pendingWinnerRef.current;
+    setWinner(w);
+    if (w) setTimeout(() => onOpenSong(w), 1100);
+  };
+
+  const size = 260, cx = size / 2, cy = size / 2, r = size / 2 - 6;
+  const polarToCartesian = (angleDeg) => {
+    const rad = (angleDeg - 90) * Math.PI / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  };
+  const wedgePath = (startAngle, endAngle) => {
+    const start = polarToCartesian(endAngle);
+    const end   = polarToCartesian(startAngle);
+    const largeArc = endAngle - startAngle <= 180 ? 0 : 1;
+    return `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 0 ${end.x} ${end.y} Z`;
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" style={{width: 360}} onClick={e => e.stopPropagation()}>
+        {phase === "select" && (
+          <>
+            <div className="text-lg font-bold text-white mb-1">🎡 Spin the Wheel</div>
+            <p className="text-xs text-gray-500 mb-4">Optionally pick 3–5 songs to narrow it down — leave everything unchecked to spin the whole active queue.</p>
+            <div className="space-y-1.5 max-h-72 overflow-y-auto mb-4">
+              {songs.map((s, i) => {
+                const checked  = selectedIds.includes(s.id);
+                const disabled = !checked && selectedIds.length >= 5;
+                const num = numbers ? numbers[i] : i + 1;
+                return (
+                  <label key={s.id}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-all ${checked ? "border-violet-500 bg-violet-600/10" : "border-[#2e2e44] hover:border-gray-500"} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
+                    <input type="checkbox" checked={checked} disabled={disabled}
+                      onChange={() => toggleSelect(s.id)} className="accent-violet-600"/>
+                    <span className="text-xs font-bold text-gray-600 w-4 flex-shrink-0">{num}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-gray-200 truncate">{s.title}</div>
+                      <div className="text-xs text-gray-500 truncate">{s.artist || s.singer}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-gray-500">
+                {selectedIds.length === 0 ? `Spinning all ${songs.length}` : `${selectedIds.length}/5 selected`}
+              </span>
+              <div className="flex gap-2">
+                <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs border border-[#2e2e44] text-gray-400 hover:border-gray-500 transition-all">Cancel</button>
+                <button onClick={() => setPhase("wheel")} disabled={!canSpin}
+                  title={!canSpin ? "Pick at least 3 songs, or leave all unchecked" : ""}
+                  className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-700 transition-all">
+                  Next →
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {phase === "wheel" && (
+          <div className="flex flex-col items-center">
+            <div className="text-lg font-bold text-white mb-4">🎡 Spin the Wheel</div>
+            <div className="relative" style={{width: size, height: size}}>
+              <div className="absolute left-1/2 -top-1 -translate-x-1/2 z-10"
+                style={{width: 0, height: 0, borderLeft: "10px solid transparent", borderRight: "10px solid transparent", borderTop: "16px solid #f9a8d4"}}/>
+              <svg width={size} height={size}
+                style={{transform: `rotate(${rotation}deg)`, transition: "transform 4.5s cubic-bezier(.15,.65,.15,1)"}}
+                onTransitionEnd={handleTransitionEnd}>
+                {selectedSongs.map((s, i) => {
+                  const start = i * segAngle, end = (i + 1) * segAngle;
+                  const mid   = start + segAngle / 2;
+                  const labelPos = polarToCartesian(mid);
+                  const lx = cx + (labelPos.x - cx) * 0.6, ly = cy + (labelPos.y - cy) * 0.6;
+                  return (
+                    <g key={s.id}>
+                      <path d={wedgePath(start, end)} fill={AVATAR_COLORS[i % AVATAR_COLORS.length]} stroke="#0d0d18" strokeWidth="2"/>
+                      <text x={lx} y={ly} fill="white" fontSize="10" fontWeight="700" textAnchor="middle" dominantBaseline="middle">
+                        {(s.title || "").slice(0, 12)}
+                      </text>
+                    </g>
+                  );
+                })}
+                <circle cx={cx} cy={cy} r="10" fill="#0d0d18" stroke="#7c3aed" strokeWidth="2"/>
+              </svg>
+            </div>
+
+            {!winner && (
+              <button onClick={startSpin} disabled={spinning}
+                className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 transition-all">
+                {spinning ? "Spinning…" : "🎲 Spin!"}
+              </button>
+            )}
+            {winner && (
+              <div className="mt-5 text-center">
+                <div className="text-sm text-gray-400">🎉 Landed on</div>
+                <div className="text-lg font-bold text-violet-300">{winner.title}</div>
+                <div className="text-xs text-gray-500 mt-1">Opening lyrics…</div>
+              </div>
+            )}
+            {!spinning && !winner && (
+              <button onClick={() => setPhase("select")} className="mt-3 text-xs text-gray-500 hover:text-gray-300 transition-all">← back to selection</button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3433,6 +3663,17 @@ function App() {
     if (updated) await db.updateFolder(user, updated);
   };
 
+  const toggleSongCompleted = async (fid, sid) => {
+    let updated;
+    setFolders(f => f.map(x => {
+      if (x.id !== fid) return x;
+      const newF = { ...x, songs: x.songs.map(s => s.id === sid ? { ...s, completed: !s.completed } : s) };
+      updated = newF;
+      return newF;
+    }));
+    if (updated) await db.updateFolder(user, updated);
+  };
+
   const selectFolder = id => { setActiveFolderId(id); setView("folder"); };
 
   // ─── Custom-lyrics state ──────────────────────────────────────────
@@ -3775,6 +4016,7 @@ function App() {
           <CuratedSongView
             song={activeSong} onBack={()=>setView("search")} folders={folders} onAddToFolder={addToFolder}
             activeFolder={activeFolder} folderSongs={folderSongs} onOpenSong={s=>openSong(s,activeFolderId)}
+            onToggleCompleted={toggleSongCompleted}
           />
         )}
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
@@ -3784,6 +4026,7 @@ function App() {
             onOpenSong={s=>openSong(s,activeFolderId)}
             onEditSong={(s, currentLyrics)=>openEditSong(activeFolderId, s, currentLyrics)}
             onShareFolder={setShareTarget}
+            onToggleCompleted={toggleSongCompleted}
             isBroadcasting={isBroadcasting}
             broadcastModerator={broadcastModerator}
             followingBroadcast={followingBroadcast}
