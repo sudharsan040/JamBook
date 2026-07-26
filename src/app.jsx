@@ -110,6 +110,27 @@ async function fetchJioSaavnArtistSongsPage(artistId, page) {
   return { songs: (d?.data?.songs || []).map(mapJioSaavnSong), total: d?.data?.total || 0 };
 }
 
+// The API's own `language` query param is silently ignored (verified against
+// the live endpoint — passing language=hindi vs language=telugu returned
+// identical results), so a language filter has to be applied client-side.
+// That can thin out a raw page, so this scans forward through consecutive
+// raw pages (capped) until it collects a full visible page of matches.
+const ARTIST_SCAN_CAP = 8; // max raw pages to scan per visible page — bounds worst-case requests
+async function fetchJioSaavnArtistPageFiltered(artistId, startRawPage, language) {
+  let rawPage = startRawPage;
+  let total = 0;
+  const collected = [];
+  for (let scans = 0; collected.length < ARTIST_PAGE_SIZE && scans < ARTIST_SCAN_CAP; scans++) {
+    const { songs, total: t } = await fetchJioSaavnArtistSongsPage(artistId, rawPage);
+    if (t) total = t;
+    if (!songs.length) break; // no more raw pages
+    collected.push(...(language === "All" ? songs : songs.filter(s => s.language === language)));
+    rawPage++;
+    if (songs.length < ARTIST_PAGE_SIZE) break; // that was the last raw page
+  }
+  return { songs: collected.slice(0, ARTIST_PAGE_SIZE), nextRawPage: rawPage, total };
+}
+
 // Movie mode: find the album(s) whose name matches the query — exact match
 // preferred (so "singam" doesn't pull in "Singam 2" alongside it), falling
 // back to any whole-word match — then return every song on those albums.
@@ -133,6 +154,88 @@ async function resolveJioSaavnArtist(query) {
   if (!results.length) return null;
   const qNorm = normalizeForMatch(query);
   return results.find(a => normalizeForMatch(a.name) === qNorm) || results[0];
+}
+
+// Shared search logic for both the audience request page and the main
+// SearchPage — `mode` is "title" | "movie" | "artist". Title/movie modes
+// resolve to a full result pool in one shot; artist mode resolves an artist
+// identity once, then pages through their songs (see fetchJioSaavnArtistPageFiltered
+// for why language filtering has to happen client-side, page by page).
+function useCatalogSearch({ query, mode, language }) {
+  const [results, setResults]         = React.useState([]);
+  const [loading, setLoading]         = React.useState(false);
+  const [artistId, setArtistId]       = React.useState(null);
+  const [artistNotFound, setArtistNotFound] = React.useState(false);
+  const [artistPage, setArtistPage]   = React.useState(0);
+  const [artistPageCursors, setArtistPageCursors] = React.useState([0]);
+  const [artistTotal, setArtistTotal] = React.useState(0);
+  const [artistHasMore, setArtistHasMore] = React.useState(true);
+  const debounceRef = React.useRef(null);
+
+  // Resolve the query: title/movie fetch results directly; artist mode only
+  // resolves WHICH artist — the page-fetch effect below does the rest.
+  React.useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]); setArtistId(null); setArtistNotFound(false);
+      setArtistPage(0); setArtistPageCursors([0]); setArtistTotal(0);
+      return;
+    }
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      if (mode === "title") {
+        const r = await searchSongs(q, language);
+        setResults(r); setArtistId(null); setArtistNotFound(false);
+        setLoading(false);
+      } else if (mode === "movie") {
+        const r = await fetchSongsForMovie(q);
+        setResults(r); setArtistId(null); setArtistNotFound(false);
+        setLoading(false);
+      } else { // artist
+        const artist = await resolveJioSaavnArtist(q);
+        setArtistPage(0); setArtistPageCursors([0]);
+        if (!artist) {
+          setResults([]); setArtistId(null); setArtistNotFound(true);
+          setLoading(false);
+        } else {
+          setArtistNotFound(false);
+          setArtistId(artist.id); // song fetching happens in the effect below
+        }
+      }
+    }, 600);
+    return () => clearTimeout(debounceRef.current);
+  }, [query, mode, language]);
+
+  // Fetches the current visible page of the resolved artist's songs — fires
+  // on first resolve AND whenever the user pages forward/back.
+  React.useEffect(() => {
+    if (mode !== "artist" || !artistId) return;
+    (async () => {
+      setLoading(true);
+      const startRaw = artistPageCursors[artistPage] ?? 0;
+      const { songs, nextRawPage, total } = await fetchJioSaavnArtistPageFiltered(artistId, startRaw, language);
+      setResults(songs);
+      setArtistTotal(total);
+      setArtistHasMore(songs.length === ARTIST_PAGE_SIZE);
+      setArtistPageCursors(prev => {
+        if (prev[artistPage + 1] !== undefined) return prev;
+        const next = [...prev]; next[artistPage + 1] = nextRawPage; return next;
+      });
+      setLoading(false);
+    })();
+  }, [mode, artistId, artistPage, language]);
+
+  // Total pages is only knowable when there's no language filter thinning
+  // results out from under the raw page size — otherwise fall back to
+  // artistHasMore to gate the Next button.
+  const artistTotalPages = language === "All" ? Math.max(1, Math.ceil(artistTotal / ARTIST_PAGE_SIZE)) : null;
+
+  return {
+    results, loading, artistNotFound,
+    artistActive: mode === "artist" && !!artistId,
+    artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal,
+  };
 }
 
 function mapJioSaavnSong(s) {
@@ -3286,38 +3389,30 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
   const [language, setLanguage]       = React.useState("Tamil"); // default Tamil per request
-  const [allResults, setAllResults]   = React.useState([]); // full pool
-  const [loading,setLoading]          = React.useState(false);
   const [creatingFolder,setCreating]  = React.useState(false);
   const [newFolderName,setNewName]    = React.useState("");
   const [showMenu,setShowMenu]        = React.useState(null);
   const [inlineNewFolder, setInlineNewFolder] = React.useState(null);
   const [page, setPage]               = React.useState(0);
-  const debounceRef = React.useRef(null);
   const resultsTopRef = React.useRef(null);
+
+  // "Movie" maps to an album lookup; "Singer"/"Composer" both map to an
+  // artist lookup (JioSaavn doesn't distinguish the two — a composer is just
+  // an artist credit with a different role).
+  const mode = filterBy === "movie" ? "movie" : (filterBy === "singer" || filterBy === "composer") ? "artist" : "title";
+  const { results: allResults, loading, artistNotFound, artistActive,
+          artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal } =
+    useCatalogSearch({ query, mode, language });
 
   // Reset to page 0 whenever the query/filter/language changes
   React.useEffect(()=>{ setPage(0); }, [query, filterBy, language]);
 
-  // Fetch the full pool when query OR language changes
-  React.useEffect(()=>{
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query.trim() || query.trim().length<2) { setAllResults([]); return; }
-    setLoading(true);
-    debounceRef.current = setTimeout(async()=>{
-      const results = await searchSongs(query, language);
-      setAllResults(results);
-      setLoading(false);
-    }, 600);
-    return ()=>clearTimeout(debounceRef.current);
-  },[query, language]);
-
-  // Slice the current page out of the pool
-  const liveResults = React.useMemo(
-    () => allResults.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [allResults, page]
-  );
-  const totalPages  = Math.max(1, Math.ceil(allResults.length / PAGE_SIZE));
+  // Title/Movie: slice the returned pool client-side (existing behavior).
+  // Singer/Composer (artist mode): the hook already hands back one page at a
+  // time, so just render it directly and drive pagination off the hook.
+  const liveResults = mode === "artist" ? allResults
+    : allResults.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalPages  = mode === "artist" ? 1 : Math.max(1, Math.ceil(allResults.length / PAGE_SIZE));
   const hasMore     = page + 1 < totalPages;
 
   // Scroll to top of results when page changes
@@ -3411,15 +3506,17 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
           <option value="composer">Composer</option>
         </select>
       </div>
-      {/* Language pills */}
-      <div className={`flex flex-wrap gap-1.5 mt-2 ${isMobile?"justify-start":"justify-center"}`}>
-        {LANGUAGES.map(l => (
-          <button key={l} onClick={()=>setLanguage(l)}
-            className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
-            {l}
-          </button>
-        ))}
-      </div>
+      {/* Language pills — not meaningful for Movie mode (a soundtrack's own language wins) */}
+      {filterBy !== "movie" && (
+        <div className={`flex flex-wrap gap-1.5 mt-2 ${isMobile?"justify-start":"justify-center"}`}>
+          {LANGUAGES.map(l => (
+            <button key={l} onClick={()=>setLanguage(l)}
+              className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -3524,10 +3621,19 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">🎵 Search Results</span>
               {loading
                 ? <div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>
-                : <span className="text-xs px-2 py-0.5 rounded-full live-badge">{allResults.length} total</span>}
-              {totalPages > 1 && <span className="text-xs text-gray-600">· Page {page+1} of {totalPages}</span>}
+                : mode === "artist"
+                  ? (artistTotalPages && <span className="text-xs px-2 py-0.5 rounded-full live-badge">{artistTotal} total</span>)
+                  : <span className="text-xs px-2 py-0.5 rounded-full live-badge">{allResults.length} total</span>}
+              {mode !== "artist" && totalPages > 1 && <span className="text-xs text-gray-600">· Page {page+1} of {totalPages}</span>}
+              {mode === "artist" && (artistTotalPages ? artistTotalPages > 1 : artistPage > 0) && (
+                <span className="text-xs text-gray-600">· Page {artistPage+1}{artistTotalPages ? ` of ${artistTotalPages}` : ""}</span>
+              )}
             </div>
-            {!loading && liveResults.length===0 && <p className="text-xs text-gray-600 py-2">No songs found.</p>}
+            {!loading && liveResults.length===0 && (
+              <p className="text-xs text-gray-600 py-2">
+                {mode === "artist" && artistNotFound ? `No artist found matching "${query.trim()}".` : "No songs found."}
+              </p>
+            )}
             <div className="space-y-2">
               {liveResults.map(song=>(
                 <div key={song.id} className="bg-[#1a1a2e] border border-[#1e2a1e] rounded-xl px-4 py-3 hover:border-green-500/30 transition-all">
@@ -3562,6 +3668,27 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                   onClick={()=>setPage(p=>p+1)}
                   disabled={!hasMore || loading}
                   className={`text-xs px-4 py-2 rounded-lg border transition-all ${!hasMore||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                  Next →
+                </button>
+              </div>
+            )}
+
+            {/* Artist-mode pagination (Singer/Composer) — pages through the API directly */}
+            {mode === "artist" && artistActive && (artistTotalPages ? artistTotalPages > 1 : (artistPage > 0 || artistHasMore)) && (
+              <div className="flex items-center justify-between mt-5 pt-4 border-t border-[#1a1a2a]">
+                <button
+                  onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
+                  disabled={artistPage === 0 || loading}
+                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                  ← Previous
+                </button>
+                <span className="text-xs text-gray-500">
+                  {artistTotalPages ? `Page ${artistPage+1} of ${artistTotalPages}` : `Page ${artistPage+1}`}
+                </span>
+                <button
+                  onClick={()=>setArtistPage(p=>p+1)}
+                  disabled={(artistTotalPages ? artistPage+1 >= artistTotalPages : !artistHasMore) || loading}
+                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
                   Next →
                 </button>
               </div>
@@ -3788,20 +3915,13 @@ function RequestSongPage({ token }) {
   const [query, setQuery]           = React.useState("");
   const [filterBy, setFilterBy]     = React.useState("title");
   const [language, setLanguage]     = React.useState("Tamil");
-  const [results, setResults]       = React.useState([]);
-  const [loading, setLoading]       = React.useState(false);
   const [addedIds, setAddedIds]     = React.useState(() => new Set());
   const [addingId, setAddingId]     = React.useState(null);
   const [toast, showToast]          = useToast();
-  const debounceRef = React.useRef(null);
 
-  // Artist mode pages through the full discography via the JioSaavn API —
-  // the other two modes get everything back in one shot (a movie soundtrack
-  // and a title search are both naturally small/bounded).
-  const [artistId, setArtistId]     = React.useState(null);
-  const [artistPage, setArtistPage] = React.useState(0);
-  const [artistTotal, setArtistTotal] = React.useState(0);
-  const [artistNotFound, setArtistNotFound] = React.useState(false);
+  const { results, loading, artistNotFound, artistActive,
+          artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal } =
+    useCatalogSearch({ query, mode: filterBy, language });
 
   React.useEffect(() => {
     (async () => {
@@ -3809,55 +3929,6 @@ function RequestSongPage({ token }) {
       setFolder(f || null);
     })();
   }, [token]);
-
-  // Resolve the query into results whenever query/filter/language changes.
-  // For "artist" mode this only RESOLVES the artist (page-fetching is a
-  // separate effect below); for "title"/"movie" it fetches results directly.
-  React.useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const q = query.trim();
-    if (q.length < 2) {
-      setResults([]); setArtistId(null); setArtistTotal(0); setArtistNotFound(false);
-      return;
-    }
-    setLoading(true);
-    debounceRef.current = setTimeout(async () => {
-      if (filterBy === "title") {
-        const r = await searchSongs(q, language);
-        setResults(r); setArtistId(null); setArtistTotal(0); setArtistNotFound(false);
-        setLoading(false);
-      } else if (filterBy === "movie") {
-        const r = await fetchSongsForMovie(q);
-        setResults(r); setArtistId(null); setArtistTotal(0); setArtistNotFound(false);
-        setLoading(false);
-      } else { // artist
-        const artist = await resolveJioSaavnArtist(q);
-        setArtistPage(0);
-        if (!artist) {
-          setResults([]); setArtistId(null); setArtistTotal(0); setArtistNotFound(true);
-          setLoading(false);
-        } else {
-          setArtistNotFound(false);
-          setArtistId(artist.id); // song fetching happens in the effect below
-        }
-      }
-    }, 600);
-    return () => clearTimeout(debounceRef.current);
-  }, [query, filterBy, language]);
-
-  // Fetches a page of the resolved artist's songs — fires on first resolve
-  // AND whenever the user pages forward/back.
-  React.useEffect(() => {
-    if (filterBy !== "artist" || !artistId) return;
-    (async () => {
-      setLoading(true);
-      const { songs, total } = await fetchJioSaavnArtistSongsPage(artistId, artistPage);
-      setResults(songs); setArtistTotal(total);
-      setLoading(false);
-    })();
-  }, [filterBy, artistId, artistPage]);
-
-  const artistTotalPages = Math.max(1, Math.ceil(artistTotal / ARTIST_PAGE_SIZE));
 
   const handleAdd = async (song) => {
     setAddingId(song.id);
@@ -3911,7 +3982,7 @@ function RequestSongPage({ token }) {
           <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus
             placeholder={filterBy==="movie" ? "Search by movie name…" : filterBy==="artist" ? "Search by artist name…" : "Search for a song…"}
             className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center focus:border-violet-500 focus:outline-none"/>
-          {filterBy === "title" && (
+          {filterBy !== "movie" && (
             <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
               {LANGUAGES.map(l => (
                 <button key={l} onClick={()=>setLanguage(l)}
@@ -3921,10 +3992,11 @@ function RequestSongPage({ token }) {
               ))}
             </div>
           )}
-          {filterBy !== "title" && (
-            <p className="text-xs text-gray-600 text-center mt-2">
-              {filterBy === "movie" ? "Shows every song from that movie's soundtrack." : "Browse an artist's songs, page by page."}
-            </p>
+          {filterBy === "movie" && (
+            <p className="text-xs text-gray-600 text-center mt-2">Shows every song from that movie's soundtrack.</p>
+          )}
+          {filterBy === "artist" && (
+            <p className="text-xs text-gray-600 text-center mt-2">Browse an artist's songs, page by page — pick a language to narrow it down.</p>
           )}
 
           {loading && <div className="flex justify-center py-8"><Spinner/></div>}
@@ -3959,7 +4031,7 @@ function RequestSongPage({ token }) {
             })}
           </div>
 
-          {filterBy === "artist" && artistId && artistTotal > ARTIST_PAGE_SIZE && (
+          {artistActive && (artistTotalPages ? artistTotalPages > 1 : (artistPage > 0 || artistHasMore)) && (
             <div className="flex items-center justify-between mt-5 pt-4 border-t border-[#1a1a2a]">
               <button
                 onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
@@ -3967,11 +4039,13 @@ function RequestSongPage({ token }) {
                 className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
                 ← Previous
               </button>
-              <span className="text-xs text-gray-500">Page {artistPage+1} of {artistTotalPages}</span>
+              <span className="text-xs text-gray-500">
+                {artistTotalPages ? `Page ${artistPage+1} of ${artistTotalPages} · ${artistTotal} songs` : `Page ${artistPage+1}`}
+              </span>
               <button
                 onClick={()=>setArtistPage(p=>p+1)}
-                disabled={artistPage+1 >= artistTotalPages || loading}
-                className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage+1>=artistTotalPages||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                disabled={(artistTotalPages ? artistPage+1 >= artistTotalPages : !artistHasMore) || loading}
+                className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
                 Next →
               </button>
             </div>
