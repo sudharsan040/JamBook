@@ -1976,6 +1976,15 @@ function partitionCompleted(songs) {
   return { pending: indexed.filter(x => !x.song.completed), completed: indexed.filter(x => x.song.completed) };
 }
 
+// Queue search — matches by exact queue number OR a substring of the title/artist.
+// Scoped to whatever list it's given (a single folder's songs), never global search.
+function matchesQueueSearch(query, song, num) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (String(num) === q) return true;
+  return (song.title || "").toLowerCase().includes(q) || (song.artist || song.singer || "").toLowerCase().includes(q);
+}
+
 function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folderId }) {
   return (
     <div onClick={() => onOpenSong(song)}
@@ -2010,6 +2019,11 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
   broadcastModerator}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
+  const [queueSearch, setQueueSearch] = React.useState("");
+  // Search only ever narrows what's rendered — Spin still draws from the
+  // full (unfiltered) pending list so a search doesn't shrink its pool.
+  const visiblePending   = pending.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
+  const visibleCompleted = completed.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
   return (
     <div className="w-52 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col h-full">
       <div className="px-4 py-4 border-b border-[#1a1a2a]">
@@ -2064,21 +2078,29 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           </div>
         )}
       </div>
+      <div className="px-3 py-2 border-b border-[#1a1a2a]">
+        <input type="text" value={queueSearch} onChange={(e)=>setQueueSearch(e.target.value)}
+          placeholder="🔍 Search by name or number"
+          className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+      </div>
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
-        {pending.map(({song,i})=>(
+        {visiblePending.map(({song,i})=>(
           <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
             onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id}/>
         ))}
-        {completed.length > 0 && (
+        {visibleCompleted.length > 0 && (
           <>
             <div className="text-xs text-gray-600 font-semibold uppercase tracking-wider pt-2 pb-1 px-1 border-t border-[#1a1a2a] mt-2">
-              ✓ Completed ({completed.length})
+              ✓ Completed ({visibleCompleted.length})
             </div>
-            {completed.map(({song,i})=>(
+            {visibleCompleted.map(({song,i})=>(
               <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
                 onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id}/>
             ))}
           </>
+        )}
+        {queueSearch.trim() && visiblePending.length === 0 && visibleCompleted.length === 0 && (
+          <div className="text-xs text-gray-600 text-center py-6">No songs match "{queueSearch.trim()}"</div>
         )}
       </div>
       {showSpin && (
@@ -2294,6 +2316,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const isMobile = useIsMobile();
   const [showQueue, setShowQueue] = React.useState(false);
   const [showSpin, setShowSpin] = React.useState(false);
+  const [queueSearch, setQueueSearch] = React.useState("");
   const [showSourceMenu, setShowSourceMenu] = React.useState(false);
   const hasQueue = activeFolder && folderSongs && folderSongs.length > 0;
   const pendingQueueSongs = hasQueue ? partitionCompleted(folderSongs).pending : [];
@@ -2535,9 +2558,16 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 )}
               </div>
             )}
+            <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
+              <input type="text" value={queueSearch} onChange={(e)=>setQueueSearch(e.target.value)}
+                placeholder="🔍 Search by name or number"
+                className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+            </div>
             <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
               {(() => {
-                const { pending, completed } = partitionCompleted(folderSongs);
+                const { pending: allPending, completed: allCompleted } = partitionCompleted(folderSongs);
+                const pending   = allPending.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
+                const completed = allCompleted.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
                 const row = ({song: s, i}) => (
                   <div key={s.id} onClick={()=>{onOpenSong(s); setShowQueue(false);}}
                     className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${s.id===song.id?"queue-song-active":"border-[#1e1e2e]"} ${s.completed?"opacity-50":""}`}>
@@ -2570,6 +2600,9 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                         </div>
                         {completed.map(row)}
                       </>
+                    )}
+                    {queueSearch.trim() && pending.length === 0 && completed.length === 0 && (
+                      <div className="text-xs text-gray-600 text-center py-6">No songs match "{queueSearch.trim()}"</div>
                     )}
                   </>
                 );
