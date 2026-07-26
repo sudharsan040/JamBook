@@ -53,21 +53,88 @@ async function searchOneStore(query, country) {
   } catch { return []; }
 }
 
+// JioSaavn (unofficial) — an Indian streaming catalogue whose film songs are
+// tagged with the correct movie as `album` and carry an explicit `language`
+// field, both far more reliable for Indian regional music than iTunes' generic
+// global catalogue (which has no language filter and mixes in unrelated
+// covers/compilations). Used as a primary source; iTunes still runs in
+// parallel as a fallback/supplement since this is an unofficial API with no
+// uptime guarantee.
+const JIOSAAVN_BASE = "https://saavn.sumit.co/api";
+
+function capitalizeLang(l) {
+  if (!l) return "";
+  return l.charAt(0).toUpperCase() + l.slice(1).toLowerCase();
+}
+
+async function searchJioSaavn(query) {
+  const url = `${JIOSAAVN_BASE}/search/songs?query=${encodeURIComponent(query)}&limit=${POOL_SIZE}`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    return d?.data?.results || [];
+  } catch {
+    // No confirmed CORS on the hosted instance — retry through our proxy
+    // before giving up (iTunes results alone still come through either way).
+    try {
+      const r = await fetchViaProxy(url);
+      const d = await r.json();
+      return d?.data?.results || [];
+    } catch { return []; }
+  }
+}
+
+function mapJioSaavnSong(s) {
+  const artists = (s.artists?.primary || s.artists?.all || []).map(a => a.name).filter(Boolean).join(", ");
+  const images  = s.image || [];
+  return {
+    id:         `js_${s.id}`,
+    type:       "live",
+    itunesId:   null,
+    jiosaavnId: s.id,
+    title:      s.name,
+    artist:     artists || "Unknown",
+    album:      s.album?.name || "",
+    cover:      images[images.length - 1]?.url || images[0]?.url || "",
+    preview:    null, // JioSaavn's downloadUrl entries are full tracks, not short previews — skip rather than risk copyrighted playback
+    language:   capitalizeLang(s.language) || "Unknown",
+  };
+}
+
 async function searchSongs(query, language = "All") {
   // Append a language keyword to bias iTunes toward regional results.
   // iTunes Search has no language filter, so this is the pragmatic approach.
   const lang   = language && language !== "All" ? language : "";
   const term   = lang ? `${query} ${lang}` : query;
 
-  const batches = await Promise.all(ITUNES_STORES.map(c => searchOneStore(term, c)));
-  const all     = batches.flat();
+  const [jioResults, ...itunesBatches] = await Promise.all([
+    searchJioSaavn(query),
+    ...ITUNES_STORES.map(c => searchOneStore(term, c)),
+  ]);
+  const all = itunesBatches.flat();
 
-  // Dedupe by trackId — iTunes often returns the same song across stores
+  // Dedupe across BOTH sources by a normalized "title|artist" key — JioSaavn
+  // is folded in first since its Indian film catalogue tags the correct movie
+  // as `album`; iTunes then fills in whatever JioSaavn didn't return.
+  const dedupeKey = (t, a) =>
+    `${(t||"").toLowerCase().replace(/[^a-z0-9]/g,"")}|${(a||"").toLowerCase().replace(/[^a-z0-9]/g,"")}`;
+
   const seen = new Set();
   const out  = [];
+  for (const s of jioResults) {
+    if (!s.id) continue;
+    const song = mapJioSaavnSong(s);
+    const key  = dedupeKey(song.title, song.artist);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(song);
+  }
   for (const s of all) {
-    if (!s.trackId || seen.has(s.trackId)) continue;
-    seen.add(s.trackId);
+    if (!s.trackId) continue;
+    const key = dedupeKey(s.trackName, s.artistName);
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push({
       id:       `it_${s.trackId}`,
       type:     "live",
@@ -117,7 +184,7 @@ async function searchSongs(query, language = "All") {
       .map(x => x.song);
   }
 
-  console.log(`[JamBook] iTunes search "${term}": ${all.length} raw → ${out.length} unique → ${filtered.length} relevant`);
+  console.log(`[JamBook] search "${term}": ${jioResults.length} JioSaavn + ${all.length} iTunes raw → ${out.length} unique → ${filtered.length} relevant`);
   return filtered;
 }
 
@@ -128,6 +195,41 @@ function normalizeTitle(t) {
     .replace(/\bft\..*$/gi,'').replace(/\(from\b.*?\)/gi,'')
     .replace(/\(.*?version\)/gi,'').replace(/\(.*?remix\)/gi,'')
     .trim();
+}
+
+// ── Fuzzy verification that a fetched lyrics result is actually for the
+// song we asked for. Lyrics sources' own internal search/matching can be
+// loose (e.g. a fuzzy search just picking its first hit), so without this a
+// completely different song — or the same title from a DIFFERENT movie —
+// can silently get returned and cached as if it were correct.
+function normalizeForMatch(s) {
+  return (s || "").toLowerCase().replace(/[^a-z0-9ऀ-ൿ\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function tokenOverlapScore(a, b) {
+  const ta = new Set(normalizeForMatch(a).split(" ").filter(t => t.length >= 2));
+  const tb = new Set(normalizeForMatch(b).split(" ").filter(t => t.length >= 2));
+  if (!ta.size || !tb.size) return 0;
+  let hits = 0;
+  for (const t of ta) if (tb.has(t)) hits++;
+  return hits / Math.min(ta.size, tb.size);
+}
+// `expected` = what we searched for ({title, artist, album}); `got` = what a
+// source handed back. Fails open (returns true) whenever a source doesn't
+// expose enough metadata to compare — we only reject when we have real
+// signal it's the wrong song.
+function isPlausibleLyricsMatch(expected, got) {
+  if (!got.title) return true;
+  const titleScore = tokenOverlapScore(expected.title, got.title);
+  if (titleScore < 0.5) return false;
+  // An identical/near-identical title is exactly the scenario where two
+  // different movies can share a song name — lean on album (movie) first,
+  // falling back to artist, whichever the source actually gives us.
+  if (got.album && expected.album) {
+    if (tokenOverlapScore(expected.album, got.album) === 0) return false;
+  } else if (got.artist && expected.artist) {
+    if (tokenOverlapScore(expected.artist, got.artist) === 0 && titleScore < 0.99) return false;
+  }
+  return true;
 }
 
 // ── Detect Indic script of a text block ──────────────────────────────
@@ -688,23 +790,36 @@ async function fetchViaProxy(targetUrl) {
 }
 
 // 1. lrclib.net — free, no key, CORS, strong Indian + global coverage
-async function fetchFromLrclib(artist, title) {
-  const r1 = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}&album_name=`);
+async function fetchFromLrclib(artist, title, album = "") {
+  const expected = { title, artist, album };
+  const r1 = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}&album_name=${encodeURIComponent(album)}`);
   if (r1.ok) {
     const d = await r1.json();
     const lyr = d.plainLyrics || (d.syncedLyrics ? d.syncedLyrics.replace(/^\[[\d:\.]+\]\s*/gm,'') : null);
-    if (lyr && lyr.length > 30) return { lyrics: lyr, source: "lrclib" };
+    if (lyr && lyr.length > 30 &&
+        isPlausibleLyricsMatch(expected, { title: d.trackName, artist: d.artistName, album: d.albumName })) {
+      return { lyrics: lyr, source: "lrclib" };
+    }
   }
   const r2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(title+' '+artist)}`);
   if (!r2.ok) throw new Error("not found");
   const hits = await r2.json();
-  const hit  = hits.find(h => h.plainLyrics);
-  if (!hit) throw new Error("empty");
-  return { lyrics: hit.plainLyrics, source: "lrclib" };
+  // Score every hit that actually has lyrics and pick the best match instead
+  // of blindly taking the first — lrclib's search is fuzzy, and a common
+  // title easily surfaces a cover or an unrelated song (or the same title
+  // from a different movie's soundtrack) ahead of the real one.
+  const best = hits
+    .filter(h => h.plainLyrics)
+    .filter(h => isPlausibleLyricsMatch(expected, { title: h.trackName, artist: h.artistName, album: h.albumName }))
+    .sort((a, b) => tokenOverlapScore(title, b.trackName || "") - tokenOverlapScore(title, a.trackName || ""))[0];
+  if (!best) throw new Error("no plausible match");
+  return { lyrics: best.plainLyrics, source: "lrclib" };
 }
 
 // 2. tamil2lyrics.com — human-curated Tanglish; goes through OUR proxy.
-// Helper — search tamil2lyrics for a given query, return the first /lyrics/ song URL found.
+// Helper — search tamil2lyrics for a given query, return ALL /lyrics/ song
+// URLs found (search relevance isn't always right — the caller tries them in
+// order and verifies each before accepting one).
 // IMPORTANT: only matches actual /lyrics/ URLs, NOT static assets (favicon, wp-content, etc.)
 const T2L_LYRIC_URL_RE_ABS = /href="(https?:\/\/(?:www\.)?tamil2lyrics\.com\/lyrics\/[a-z0-9][a-z0-9-]+\/?)"/gi;
 const T2L_LYRIC_URL_RE_REL = /href="(\/lyrics\/[a-z0-9][a-z0-9-]+\/?)"/gi;
@@ -714,7 +829,7 @@ async function _t2lSearch(query) {
   const sr = await fetchViaProxy(searchUrl);
   const html = await sr.text();
 
-  // Find all candidate URLs, pick the first that doesn't look like a static asset
+  // Find all candidate URLs
   const candidates = [];
   let m;
   while ((m = T2L_LYRIC_URL_RE_ABS.exec(html)) !== null) candidates.push(m[1]);
@@ -722,45 +837,16 @@ async function _t2lSearch(query) {
   T2L_LYRIC_URL_RE_ABS.lastIndex = 0;
   T2L_LYRIC_URL_RE_REL.lastIndex = 0;
 
-  // Filter out anything that looks like a static asset or admin URL
+  // Filter out anything that looks like a static asset or admin URL, then dedupe
   const isAsset = (u) => /\.(png|jpg|jpeg|gif|svg|webp|ico|css|js|woff|woff2|ttf|pdf)(\?|$)/i.test(u)
     || /\/(wp-content|wp-admin|wp-includes|feed|comments|category|tag|author|page)\//i.test(u);
-  const real = candidates.filter(u => !isAsset(u));
+  const real = candidates.filter((u, i, a) => !isAsset(u) && a.indexOf(u) === i);
 
-  return { url: real[0] || null, html, allCandidates: candidates };
+  return { urls: real, html };
 }
 
-async function fetchFromTamil2Lyrics(artist, title) {
-  if (!HAS_PROXY) throw new Error("proxy not configured");
-
-  // Try several query variants — search engines on WP can be picky.
-  // Title-only goes FIRST: the site's WordPress search treats a multi-artist
-  // string (e.g. "A & B") as required terms that rarely appear verbatim in a
-  // post's credits, so the title+artist combo usually returns zero matches
-  // and just burns an extra proxy round-trip before falling back anyway —
-  // which under a slow network can push the whole lookup past its timeout.
-  const cleanTitle = title.replace(/\(.+?\)/g, "").trim();
-  const queries = [
-    cleanTitle,                                // "Moongil Thottam"
-    cleanTitle.split(/\s+/).slice(0, 2).join(" "), // first 2 words "Moongil Thottam"
-    cleanTitle + (artist ? " " + artist : ""), // "Moongil Thottam Shakthisree"
-  ].filter((q, i, a) => q && a.indexOf(q) === i); // dedupe + drop empties
-
-  let foundUrl = null;
-  let lastHtmlPreview = "";
-  for (const q of queries) {
-    const { url, html } = await _t2lSearch(q);
-    if (url) { foundUrl = url; break; }
-    lastHtmlPreview = (html || "").slice(0, 200);
-  }
-  if (!foundUrl) {
-    console.warn("[tamil2lyrics] search returned no lyric link. HTML preview:", lastHtmlPreview);
-    throw new Error("not found");
-  }
-
-  const pr = await fetchViaProxy(foundUrl);
-  const pageHtml = await pr.text();
-
+// Parse a single tamil2lyrics post page into {tanglishText, nativeText, pageTitle}.
+function _t2lParsePage(pageHtml) {
   // Strip out <script>, <style>, ads, and other noise BEFORE turning HTML into text
   const stripNoiseTags = (html) => html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -793,6 +879,9 @@ async function fetchFromTamil2Lyrics(artist, title) {
     if (NOISE_CONTAINS_RE.test(trimmed)) return false;
     return true;
   }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+
+  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(pageHtml);
+  const pageTitle  = titleMatch ? titleMatch[1].replace(/&amp;/g, "&").trim() : "";
 
   let tanglishText = "", nativeText = "";
 
@@ -835,10 +924,7 @@ async function fetchFromTamil2Lyrics(artist, title) {
       const m = pageHtml.match(/<\/header>([\s\S]*?)<footer/i);
       if (m && m[1] && m[1].length > 300) body = m[1];
     }
-    if (!body) {
-      console.warn("[tamil2lyrics] parse fail. URL:", foundUrl, "HTML preview:", pageHtml.slice(0, 400));
-      throw new Error("parse fail");
-    }
+    if (!body) return { tanglishText: "", nativeText: "", pageTitle };
 
     const fullText = toText(stripNoiseTags(body));
     const sections = fullText.split(/^\s*(?:English|Tanglish|Romanized|Translation)\s*$/im);
@@ -857,16 +943,75 @@ async function fetchFromTamil2Lyrics(artist, title) {
     nativeText   = cleanLines(nativeText);
   }
 
-  const latinChars = (tanglishText.match(/[a-zA-Z]/g) || []).length;
-  if (latinChars < 50 || tanglishText.length < 80) throw new Error("not tanglish");
+  return { tanglishText, nativeText, pageTitle };
+}
 
-  return {
-    lyrics:           tanglishText,         // primary display (Tanglish for tamil2lyrics)
-    nativeLyrics:     nativeText || null,   // store native script separately so toggle works
-    source:           "tamil2lyrics",
-    alreadyRomanized: true,
-    structured:       true,                 // signal to parser: skip auto-Verse-numbering
-  };
+async function fetchFromTamil2Lyrics(artist, title, album = "") {
+  if (!HAS_PROXY) throw new Error("proxy not configured");
+
+  // Try several query variants — search engines on WP can be picky.
+  // Title-only goes FIRST: the site's WordPress search treats a multi-artist
+  // string (e.g. "A & B") as required terms that rarely appear verbatim in a
+  // post's credits, so the title+artist combo usually returns zero matches
+  // and just burns an extra proxy round-trip before falling back anyway —
+  // which under a slow network can push the whole lookup past its timeout.
+  // The movie-qualified variant helps most when the same song title exists
+  // in more than one film — it steers WP search toward the right post.
+  const cleanTitle = title.replace(/\(.+?\)/g, "").trim();
+  const queries = [
+    cleanTitle,                                      // "Moongil Thottam"
+    cleanTitle.split(/\s+/).slice(0, 2).join(" "),    // first 2 words
+    album ? cleanTitle + " " + album : null,          // "Moongil Thottam <movie>"
+    cleanTitle + (artist ? " " + artist : ""),        // "Moongil Thottam Shakthisree"
+  ].filter((q, i, a) => q && a.indexOf(q) === i);     // dedupe + drop empties/nulls
+
+  const expected = { title, artist, album };
+  let lastHtmlPreview = "";
+  let triedAny = false;
+
+  // Cap total candidate page fetches across all query variants so a
+  // stubborn mismatch can't burn an unbounded number of proxy round-trips.
+  const MAX_CANDIDATES = 4;
+  let attempts = 0;
+
+  for (const q of queries) {
+    if (attempts >= MAX_CANDIDATES) break;
+    const { urls, html } = await _t2lSearch(q);
+    if (!urls.length) { lastHtmlPreview = (html || "").slice(0, 200); continue; }
+
+    for (const foundUrl of urls) {
+      if (attempts >= MAX_CANDIDATES) break;
+      attempts++;
+      triedAny = true;
+
+      const pr = await fetchViaProxy(foundUrl);
+      const pageHtml = await pr.text();
+      const { tanglishText, nativeText, pageTitle } = _t2lParsePage(pageHtml);
+
+      const latinChars = (tanglishText.match(/[a-zA-Z]/g) || []).length;
+      if (latinChars < 50 || tanglishText.length < 80) continue; // no usable Tanglish on this page
+
+      // Verify the page is actually about the song we asked for before
+      // trusting it — this is what stops a search engine merely ranking an
+      // unrelated (or same-titled, wrong-movie) post first from silently
+      // winning and getting cached.
+      if (!isPlausibleLyricsMatch(expected, { title: pageTitle })) {
+        console.warn("[tamil2lyrics] skipping mismatched page:", foundUrl, "→", pageTitle);
+        continue;
+      }
+
+      return {
+        lyrics:           tanglishText,         // primary display (Tanglish for tamil2lyrics)
+        nativeLyrics:     nativeText || null,   // store native script separately so toggle works
+        source:           "tamil2lyrics",
+        alreadyRomanized: true,
+        structured:       true,                 // signal to parser: skip auto-Verse-numbering
+      };
+    }
+  }
+
+  if (!triedAny) console.warn("[tamil2lyrics] search returned no lyric link. HTML preview:", lastHtmlPreview);
+  throw new Error("not found");
 }
 
 // Hard cap each source so a slow / dead server never holds up the page.
@@ -885,7 +1030,7 @@ function withTimeout(promise, ms, label) {
 // Race available sources — first with real lyrics wins. Source preference
 // comes from user settings; default is "tamil2lyrics-first" (try it first;
 // fall back to lrclib if it fails).
-async function fetchLyricsRace(artist, title) {
+async function fetchLyricsRace(artist, title, album = "") {
   const norm = normalizeTitle(title);
   const T_DIRECT = 12000;
   const T_PROXY  = 18000;
@@ -907,45 +1052,45 @@ async function fetchLyricsRace(artist, title) {
   };
 
   if (pref === "tamil2lyrics-only" && HAS_PROXY) {
-    try { return await wrap(fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY); }
+    try { return await wrap(fetchFromTamil2Lyrics(artist, norm, album), "tamil2lyrics", T_PROXY); }
     catch {
-      try { return await wrap(fetchFromTamil2Lyrics("", norm), "tamil2lyrics-2", T_PROXY); }
+      try { return await wrap(fetchFromTamil2Lyrics("", norm, album), "tamil2lyrics-2", T_PROXY); }
       catch { return null; }
     }
   }
 
   if (pref === "lrclib-only" || !HAS_PROXY) {
-    try { return await wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT); }
+    try { return await wrap(fetchFromLrclib(artist, norm, album), "lrclib", T_DIRECT); }
     catch {
-      try { return await wrap(fetchFromLrclib("", norm), "lrclib-2", T_DIRECT); }
+      try { return await wrap(fetchFromLrclib("", norm, album), "lrclib-2", T_DIRECT); }
       catch { return null; }
     }
   }
 
   if (pref === "lrclib-first" && HAS_PROXY) {
     return await trySequential(
-      fetchFromLrclib      (artist, norm), "lrclib",       T_DIRECT,
-      fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY,
+      fetchFromLrclib      (artist, norm, album), "lrclib",       T_DIRECT,
+      fetchFromTamil2Lyrics(artist, norm, album), "tamil2lyrics", T_PROXY,
     );
   }
 
   // Default: tamil2lyrics-first — try tamil2lyrics, fall back to lrclib
   if (HAS_PROXY) {
     return await trySequential(
-      fetchFromTamil2Lyrics(artist, norm), "tamil2lyrics", T_PROXY,
-      fetchFromLrclib      (artist, norm), "lrclib",       T_DIRECT,
+      fetchFromTamil2Lyrics(artist, norm, album), "tamil2lyrics", T_PROXY,
+      fetchFromLrclib      (artist, norm, album), "lrclib",       T_DIRECT,
     );
   }
   // Fallback if no proxy
-  try { return await wrap(fetchFromLrclib(artist, norm), "lrclib", T_DIRECT); } catch { return null; }
+  try { return await wrap(fetchFromLrclib(artist, norm, album), "lrclib", T_DIRECT); } catch { return null; }
 }
 
 // Fetch explicitly from one named source (manual switcher in UI)
-async function fetchLyricsFromSource(artist, title, source) {
+async function fetchLyricsFromSource(artist, title, source, album = "") {
   const norm = normalizeTitle(title);
   try {
-    if (source === "lrclib")       return await fetchFromLrclib(artist, norm);
-    if (source === "tamil2lyrics") return await fetchFromTamil2Lyrics(artist, norm);
+    if (source === "lrclib")       return await fetchFromLrclib(artist, norm, album);
+    if (source === "tamil2lyrics") return await fetchFromTamil2Lyrics(artist, norm, album);
   } catch {}
   return null;
 }
@@ -1213,7 +1358,7 @@ async function preFetchLyrics(song) {
   try {
     let data = existing;
     if (!data) {
-      data = await fetchLyricsRace(song.artist, song.title);
+      data = await fetchLyricsRace(song.artist, song.title, song.album);
       if (!data) return;
       setCachedLyrics(song.id, data);
     }
@@ -2038,7 +2183,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
       return;
     }
     setLyricsData(null); setLoading(true); setNotFound(false); setWasCached(false);
-    fetchLyricsRace(song.artist, song.title).then(result => {
+    fetchLyricsRace(song.artist, song.title, song.album).then(result => {
       if (result) { setLyricsData(result); setCachedLyrics(song.id, result); }
       else        { setNotFound(true); }
       setLoading(false);
@@ -2048,7 +2193,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   // Switch source manually. If I'm the moderator, push the new lyrics to followers.
   const switchSource = async (src) => {
     setSwitching(true); setGoogleRoman(null);
-    const result = await fetchLyricsFromSource(song.artist, song.title, src);
+    const result = await fetchLyricsFromSource(song.artist, song.title, src, song.album);
     if (result) {
       setLyricsData(result);
       setCachedLyrics(song.id, result);
@@ -2255,7 +2400,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <button
                 onClick={() => {
                   setNotFound(false); setLoading(true);
-                  fetchLyricsRace(song.artist, song.title).then(result => {
+                  fetchLyricsRace(song.artist, song.title, song.album).then(result => {
                     if (result) { setLyricsData(result); setCachedLyrics(song.id, result); }
                     else setNotFound(true);
                     setLoading(false);
