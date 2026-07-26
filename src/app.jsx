@@ -22,6 +22,11 @@ const SUPABASE_KEY   = process.env.SUPABASE_KEY;
 // to disable tamil2lyrics (lrclib still works direct).
 const CORS_PROXY_URL = "https://jambook-proxy.lssusan173.workers.dev/?url=";
 const HAS_PROXY      = !!CORS_PROXY_URL;
+// Same Worker, different route — it holds the Spotify Client Credentials
+// token exchange server-side (see the Worker's /spotify handler), so the
+// frontend never sees the client secret or the access token's origin call.
+const SPOTIFY_PROXY_BASE = CORS_PROXY_URL ? CORS_PROXY_URL.replace(/\/\?url=$/, "") : "";
+const HAS_SPOTIFY    = !!SPOTIFY_PROXY_BASE;
 
 const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -60,6 +65,80 @@ function mapItunesTrack(t) {
     title: t.trackName, artist: t.artistName, album: t.collectionName || "",
     cover: t.artworkUrl100, preview: t.previewUrl, language: "Unknown",
   };
+}
+
+// Spotify — our primary source: official API, generous rate limits, correct
+// pagination (unlike iTunes, which has none). Goes through our own Worker,
+// which holds the Client Credentials token server-side (see /spotify route);
+// `path` here is a full Spotify Web API path + query string.
+async function spotifyFetch(path) {
+  if (!HAS_SPOTIFY) return null;
+  try {
+    const r = await fetch(`${SPOTIFY_PROXY_BASE}/spotify?path=${encodeURIComponent(path)}`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+// `opts.album`/`opts.cover` override the track's own (missing, in the
+// album-tracks endpoint) album metadata when fetching a specific album's
+// tracklist — search results already carry a full nested `album` object.
+function mapSpotifyTrack(t, opts = {}) {
+  const images = t.album?.images || [];
+  return {
+    id: `sp_${t.id}`, type: "live", itunesId: null, spotifyId: t.id,
+    title: t.name,
+    artist: (t.artists || []).map(a => a.name).filter(Boolean).join(", ") || "Unknown",
+    album: opts.album ?? t.album?.name ?? "",
+    cover: opts.cover ?? images[0]?.url ?? "",
+    preview: t.preview_url || null,
+    language: "Unknown", // Spotify doesn't expose a per-track language
+  };
+}
+
+async function searchSpotifySongs(query) {
+  const d = await spotifyFetch(`/v1/search?q=${encodeURIComponent(query)}&type=track&market=IN&limit=25`);
+  return (d?.tracks?.items || []).map(t => mapSpotifyTrack(t));
+}
+
+async function searchSpotifyAlbums(query) {
+  const d = await spotifyFetch(`/v1/search?q=${encodeURIComponent(query)}&type=album&market=IN&limit=10`);
+  return d?.albums?.items || null;
+}
+
+async function fetchSpotifyAlbumTracks(albumId, albumName, albumCover) {
+  const d = await spotifyFetch(`/v1/albums/${encodeURIComponent(albumId)}/tracks?market=IN&limit=50`);
+  return (d?.items || []).map(t => mapSpotifyTrack(t, { album: albumName, cover: albumCover }));
+}
+
+async function searchSpotifyArtists(query) {
+  const d = await spotifyFetch(`/v1/search?q=${encodeURIComponent(query)}&type=artist&market=IN&limit=5`);
+  return d?.artists?.items || null;
+}
+
+async function resolveSpotifyArtist(query) {
+  const results = await searchSpotifyArtists(query);
+  if (results === null) return { artist: null, failed: true };
+  if (!results.length) return { artist: null, failed: false };
+  const qNorm = normalizeForMatch(query);
+  const a = results.find(x => normalizeForMatch(x.name || "") === qNorm) || results[0];
+  return { artist: { id: a.id, name: a.name }, failed: false };
+}
+
+// No single "page through all songs by this artist" endpoint on Spotify —
+// closest equivalent is albums, then each album's tracks. Capped at a
+// reasonable number of albums so this stays a bounded number of requests;
+// used as the SECOND fallback (JioSaavn's dedicated endpoint is the primary
+// for artist-mode browsing — real pagination through a much deeper catalogue).
+async function fetchSpotifyArtistSongPool(artistId) {
+  const d = await spotifyFetch(`/v1/artists/${encodeURIComponent(artistId)}/albums?market=IN&limit=20&include_groups=album,single`);
+  if (d === null) return { songs: [], failed: true };
+  const albums = d.items || [];
+  if (!albums.length) return { songs: [], failed: false };
+  const lists = await Promise.all(albums.map(a => fetchSpotifyAlbumTracks(a.id, a.name, a.images?.[0]?.url)));
+  const seen = new Set(), out = [];
+  for (const list of lists) for (const s of list) if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+  return { songs: out, failed: false };
 }
 
 // iTunes fallback for Movie/Artist mode — used when JioSaavn (our primary,
@@ -219,15 +298,31 @@ async function fetchJioSaavnArtistPageFiltered(artistId, startRawPage, language)
 // Movie mode: find the album(s) whose name matches the query — exact match
 // preferred (so "singam" doesn't pull in "Singam 2" alongside it), falling
 // back to any whole-word match — then return every song on those albums.
-// Falls back to iTunes whenever JioSaavn comes back empty, whether that's
-// because it's rate-limited/down or just doesn't have that album.
+// Tries Spotify first (most reliable, correct tagging), then JioSaavn
+// (still the best Indian-film catalogue when Spotify doesn't have it), then
+// iTunes as the final safety net.
+function pickAlbumsMatching(albums, query) {
+  const qNorm   = normalizeForMatch(query);
+  const exact   = albums.filter(a => normalizeForMatch(a.name) === qNorm);
+  const partial = albums.filter(a => fieldMatchesWholeWords(a.name, query));
+  return (exact.length ? exact : partial).slice(0, 3);
+}
+
 async function fetchSongsForMovie(query) {
-  const albums = await searchJioSaavnAlbums(query);
-  if (albums !== null && albums.length) {
-    const qNorm = normalizeForMatch(query);
-    const exact   = albums.filter(a => normalizeForMatch(a.name) === qNorm);
-    const partial = albums.filter(a => fieldMatchesWholeWords(a.name, query));
-    const chosen  = (exact.length ? exact : partial).slice(0, 3);
+  const spAlbums = await searchSpotifyAlbums(query);
+  if (spAlbums !== null && spAlbums.length) {
+    const chosen = pickAlbumsMatching(spAlbums, query);
+    if (chosen.length) {
+      const lists = await Promise.all(chosen.map(a => fetchSpotifyAlbumTracks(a.id, a.name, a.images?.[0]?.url)));
+      const seen = new Set(), out = [];
+      for (const list of lists) for (const s of list) if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+      if (out.length) return { songs: out, failed: false, source: "spotify" };
+    }
+  }
+
+  const jsAlbums = await searchJioSaavnAlbums(query);
+  if (jsAlbums !== null && jsAlbums.length) {
+    const chosen = pickAlbumsMatching(jsAlbums, query);
     if (chosen.length) {
       const lists = await Promise.all(chosen.map(a => fetchJioSaavnAlbumSongs(a.id)));
       const seen = new Set(), out = [];
@@ -235,6 +330,7 @@ async function fetchSongsForMovie(query) {
       if (out.length) return { songs: out, failed: false, source: "jiosaavn" };
     }
   }
+
   const fallback = await fetchItunesAlbumSongs(query);
   return { ...fallback, source: "itunes" };
 }
@@ -259,20 +355,20 @@ function useCatalogSearch({ query, mode, language }) {
   const [results, setResults]         = React.useState([]);
   const [loading, setLoading]         = React.useState(false);
   const [artistId, setArtistId]       = React.useState(null);
-  // 'jiosaavn' (deep, real pagination, language-filterable) or 'itunes'
-  // (fallback pool, up to 200 songs, client-paginated, no language filter —
-  // iTunes doesn't tag track language reliably).
+  // 'jiosaavn' (primary — deep, real pagination, language-filterable) or
+  // 'spotify'/'itunes' (fallback pools — capped, client-paginated, no
+  // language filter since neither tags per-track language reliably).
   const [artistSource, setArtistSource] = React.useState(null);
-  const [itunesArtistPool, setItunesArtistPool] = React.useState([]);
+  const [fallbackArtistPool, setFallbackArtistPool] = React.useState([]);
   const [artistNotFound, setArtistNotFound] = React.useState(false);
   const [artistPage, setArtistPage]   = React.useState(0);
   const [artistPageCursors, setArtistPageCursors] = React.useState([0]);
   const [artistTotal, setArtistTotal] = React.useState(0);
   const [artistHasMore, setArtistHasMore] = React.useState(true);
-  // True only when BOTH sources failed to even answer (e.g. everything is
+  // True only when EVERY source failed to even answer (e.g. everything is
   // rate-limited/down) — distinct from a successful search that found nothing.
   const [catalogError, setCatalogError] = React.useState(false);
-  const [resultSource, setResultSource] = React.useState(null); // 'jiosaavn' | 'itunes' | null, for title/movie too
+  const [resultSource, setResultSource] = React.useState(null); // 'spotify' | 'jiosaavn' | 'itunes' | null
   const debounceRef = React.useRef(null);
 
   // Resolve the query: title/movie fetch results directly; artist mode only
@@ -281,7 +377,7 @@ function useCatalogSearch({ query, mode, language }) {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const q = query.trim();
     if (q.length < 2) {
-      setResults([]); setArtistId(null); setArtistSource(null); setItunesArtistPool([]);
+      setResults([]); setArtistId(null); setArtistSource(null); setFallbackArtistPool([]);
       setArtistNotFound(false); setCatalogError(false);
       setArtistPage(0); setArtistPageCursors([0]); setArtistTotal(0);
       return;
@@ -297,7 +393,7 @@ function useCatalogSearch({ query, mode, language }) {
         setResults(songs); setArtistId(null); setArtistNotFound(false);
         setCatalogError(failed && !songs.length); setResultSource(source);
         setLoading(false);
-      } else { // artist
+      } else { // artist — JioSaavn primary (real pagination), Spotify then iTunes as fallback pools
         setArtistPage(0); setArtistPageCursors([0]);
         const js = await resolveJioSaavnArtist(q);
         if (js.artist) {
@@ -306,12 +402,30 @@ function useCatalogSearch({ query, mode, language }) {
           setArtistId(js.artist.id); // page-fetch effect (jiosaavn branch) takes over
           return;
         }
-        // JioSaavn had nothing (down, rate-limited, or genuinely no match) — try iTunes.
+        // JioSaavn had nothing (down, rate-limited, or genuinely no match) — try Spotify.
+        const sp = await resolveSpotifyArtist(q);
+        if (sp.artist) {
+          const { songs } = await fetchSpotifyArtistSongPool(sp.artist.id);
+          if (songs.length) {
+            setArtistSource("spotify"); setResultSource("spotify");
+            setFallbackArtistPool(songs);
+            setResults(songs.slice(0, ARTIST_PAGE_SIZE));
+            setArtistTotal(songs.length);
+            setArtistHasMore(songs.length > ARTIST_PAGE_SIZE);
+            setArtistNotFound(false); setCatalogError(false);
+            setArtistId(null);
+            setLoading(false);
+            return;
+          }
+          // Resolved an artist but got no songs (or the fetch itself failed) —
+          // still worth trying iTunes rather than giving up here.
+        }
+        // Spotify had nothing usable either — last resort, iTunes.
         const it = await resolveItunesArtist(q);
         if (it.artist) {
           const { songs } = await fetchItunesArtistSongs(it.artist.id);
           setArtistSource("itunes"); setResultSource("itunes");
-          setItunesArtistPool(songs);
+          setFallbackArtistPool(songs);
           setResults(songs.slice(0, ARTIST_PAGE_SIZE));
           setArtistTotal(songs.length);
           setArtistHasMore(songs.length > ARTIST_PAGE_SIZE);
@@ -320,8 +434,9 @@ function useCatalogSearch({ query, mode, language }) {
           setLoading(false);
         } else {
           setResults([]); setArtistId(null); setArtistSource(null);
-          setCatalogError(js.failed && it.failed);
-          setArtistNotFound(!(js.failed && it.failed));
+          const allFailed = js.failed && sp.failed && it.failed;
+          setCatalogError(allFailed);
+          setArtistNotFound(!allFailed);
           setLoading(false);
         }
       }
@@ -348,26 +463,27 @@ function useCatalogSearch({ query, mode, language }) {
         });
         setLoading(false);
       })();
-    } else if (artistSource === "itunes") {
+    } else if (artistSource === "spotify" || artistSource === "itunes") {
       // Already have the full (capped) pool in memory — just slice locally.
-      setResults(itunesArtistPool.slice(artistPage * ARTIST_PAGE_SIZE, (artistPage + 1) * ARTIST_PAGE_SIZE));
-      setArtistHasMore((artistPage + 1) * ARTIST_PAGE_SIZE < itunesArtistPool.length);
+      setResults(fallbackArtistPool.slice(artistPage * ARTIST_PAGE_SIZE, (artistPage + 1) * ARTIST_PAGE_SIZE));
+      setArtistHasMore((artistPage + 1) * ARTIST_PAGE_SIZE < fallbackArtistPool.length);
     }
-  }, [mode, artistSource, artistId, artistPage, language, itunesArtistPool]);
+  }, [mode, artistSource, artistId, artistPage, language, fallbackArtistPool]);
 
   // Total pages is only knowable when there's no language filter thinning
-  // results out from under the raw page size (jiosaavn), or always (itunes,
-  // since that path skips language filtering) — otherwise fall back to
-  // artistHasMore to gate the Next button.
-  const artistTotalPages = artistSource === "itunes"
-    ? Math.max(1, Math.ceil(itunesArtistPool.length / ARTIST_PAGE_SIZE))
+  // results out from under the raw page size (jiosaavn), or always for the
+  // fallback pools (spotify/itunes both skip language filtering) —
+  // otherwise fall back to artistHasMore to gate the Next button.
+  const isFallbackPool = artistSource === "spotify" || artistSource === "itunes";
+  const artistTotalPages = isFallbackPool
+    ? Math.max(1, Math.ceil(fallbackArtistPool.length / ARTIST_PAGE_SIZE))
     : (language === "All" ? Math.max(1, Math.ceil(artistTotal / ARTIST_PAGE_SIZE)) : null);
 
   return {
     results, loading, artistNotFound, catalogError, resultSource,
-    artistActive: mode === "artist" && (!!artistId || artistSource === "itunes"),
+    artistActive: mode === "artist" && (!!artistId || isFallbackPool),
     artistPage, setArtistPage, artistTotalPages, artistHasMore,
-    artistTotal: artistSource === "itunes" ? itunesArtistPool.length : artistTotal,
+    artistTotal: isFallbackPool ? fallbackArtistPool.length : artistTotal,
   };
 }
 
@@ -394,20 +510,28 @@ async function searchSongs(query, language = "All") {
   const lang   = language && language !== "All" ? language : "";
   const term   = lang ? `${query} ${lang}` : query;
 
-  const [jioResults, ...itunesBatches] = await Promise.all([
+  const [spotifyResults, jioResults, ...itunesBatches] = await Promise.all([
+    searchSpotifySongs(term),
     searchJioSaavn(query),
     ...ITUNES_STORES.map(c => searchOneStore(term, c)),
   ]);
   const all = itunesBatches.flat();
 
-  // Dedupe across BOTH sources by a normalized "title|artist" key — JioSaavn
-  // is folded in first since its Indian film catalogue tags the correct movie
-  // as `album`; iTunes then fills in whatever JioSaavn didn't return.
+  // Dedupe across all three sources by a normalized "title|artist" key.
+  // Spotify goes first (most reliable, correct tagging), then JioSaavn
+  // (still the best for Indian film catalogue tagging when Spotify doesn't
+  // have something), then iTunes fills in whatever's still missing.
   const dedupeKey = (t, a) =>
     `${(t||"").toLowerCase().replace(/[^a-z0-9]/g,"")}|${(a||"").toLowerCase().replace(/[^a-z0-9]/g,"")}`;
 
   const seen = new Set();
   const out  = [];
+  for (const song of spotifyResults) {
+    const key = dedupeKey(song.title, song.artist);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(song);
+  }
   for (const s of jioResults) {
     if (!s.id) continue;
     const song = mapJioSaavnSong(s);
@@ -470,7 +594,7 @@ async function searchSongs(query, language = "All") {
       .map(x => x.song);
   }
 
-  console.log(`[JamBook] search "${term}": ${jioResults.length} JioSaavn + ${all.length} iTunes raw → ${out.length} unique → ${filtered.length} relevant`);
+  console.log(`[JamBook] search "${term}": ${spotifyResults.length} Spotify + ${jioResults.length} JioSaavn + ${all.length} iTunes raw → ${out.length} unique → ${filtered.length} relevant`);
   return filtered;
 }
 
