@@ -492,6 +492,10 @@ function useCatalogSearch({ query, mode, language }) {
     artistActive: mode === "artist" && (!!artistId || isFallbackPool),
     artistPage, setArtistPage, artistTotalPages, artistHasMore,
     artistTotal: isFallbackPool ? filteredFallbackPool.length : artistTotal,
+    // The one source with real per-track language data is unavailable right
+    // now (down/rate-limited) and we've landed on a fallback pool instead —
+    // a specific language pick can never match anything there.
+    languageFilterUnavailable: isFallbackPool && language !== "All",
   };
 }
 
@@ -3666,7 +3670,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   // an artist credit with a different role).
   const mode = filterBy === "movie" ? "movie" : (filterBy === "singer" || filterBy === "composer") ? "artist" : "title";
   const { results: allResults, loading, artistNotFound, catalogError, artistActive,
-          artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal } =
+          artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal, languageFilterUnavailable } =
     useCatalogSearch({ query, mode, language });
 
   // Reset to page 0 whenever the query/filter/language changes
@@ -3894,7 +3898,10 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 <span className="text-xs text-gray-600">· Page {artistPage+1}{artistTotalPages ? ` of ${artistTotalPages}` : ""}</span>
               )}
             </div>
-            {!loading && liveResults.length===0 && (
+            {!loading && mode === "artist" && languageFilterUnavailable && (
+              <p className="text-xs text-amber-500/80 py-2">Language filtering isn't available for this artist right now — try "All", or search again in a bit.</p>
+            )}
+            {!loading && liveResults.length===0 && !(mode === "artist" && languageFilterUnavailable) && (
               <p className="text-xs text-gray-600 py-2">
                 {catalogError
                   ? "Search is temporarily unavailable — please try again in a moment."
@@ -4189,7 +4196,7 @@ function RequestSongPage({ token }) {
   const [toast, showToast]          = useToast();
 
   const { results, loading, artistNotFound, catalogError, artistActive,
-          artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal } =
+          artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal, languageFilterUnavailable } =
     useCatalogSearch({ query, mode: filterBy, language });
 
   React.useEffect(() => {
@@ -4269,7 +4276,10 @@ function RequestSongPage({ token }) {
           )}
 
           {loading && <div className="flex justify-center py-8"><Spinner/></div>}
-          {!loading && query.trim().length >= 2 && results.length === 0 && (
+          {!loading && filterBy === "artist" && languageFilterUnavailable && (
+            <p className="text-xs text-amber-500/80 text-center py-2">Language filtering isn't available for this artist right now — try "All", or search again in a bit.</p>
+          )}
+          {!loading && query.trim().length >= 2 && results.length === 0 && !(filterBy === "artist" && languageFilterUnavailable) && (
             <p className="text-xs text-gray-600 text-center py-6">
               {catalogError
                 ? "Search is temporarily unavailable — please try again in a moment."
