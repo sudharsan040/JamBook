@@ -68,22 +68,71 @@ function capitalizeLang(l) {
   return l.charAt(0).toUpperCase() + l.slice(1).toLowerCase();
 }
 
-async function searchJioSaavn(query) {
-  const url = `${JIOSAAVN_BASE}/search/songs?query=${encodeURIComponent(query)}&limit=${POOL_SIZE}`;
+// Generic GET against the JioSaavn API — tries direct fetch first, falls back
+// through our CORS proxy since this hosted instance has no confirmed CORS.
+async function jiosaavnFetch(path) {
+  const url = `${JIOSAAVN_BASE}${path}`;
   try {
     const r = await fetch(url);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    return d?.data?.results || [];
+    return await r.json();
   } catch {
-    // No confirmed CORS on the hosted instance — retry through our proxy
-    // before giving up (iTunes results alone still come through either way).
     try {
       const r = await fetchViaProxy(url);
-      const d = await r.json();
-      return d?.data?.results || [];
-    } catch { return []; }
+      return await r.json();
+    } catch { return null; }
   }
+}
+
+async function searchJioSaavn(query) {
+  const d = await jiosaavnFetch(`/search/songs?query=${encodeURIComponent(query)}&limit=${POOL_SIZE}`);
+  return d?.data?.results || [];
+}
+
+// ── Album (movie) and artist lookups — used by the audience request page's
+// Movie/Artist filters so they return a whole soundtrack/discography instead
+// of whatever a generic song-title search happens to also match.
+async function searchJioSaavnAlbums(query) {
+  const d = await jiosaavnFetch(`/search/albums?query=${encodeURIComponent(query)}&limit=10`);
+  return d?.data?.results || [];
+}
+async function fetchJioSaavnAlbumSongs(albumId) {
+  const d = await jiosaavnFetch(`/albums?id=${encodeURIComponent(albumId)}`);
+  return (d?.data?.songs || []).map(mapJioSaavnSong);
+}
+async function searchJioSaavnArtists(query) {
+  const d = await jiosaavnFetch(`/search/artists?query=${encodeURIComponent(query)}&limit=10`);
+  return d?.data?.results || [];
+}
+const ARTIST_PAGE_SIZE = 10; // fixed page size the JioSaavn API itself uses
+async function fetchJioSaavnArtistSongsPage(artistId, page) {
+  const d = await jiosaavnFetch(`/artists/${encodeURIComponent(artistId)}/songs?page=${page}&sortBy=popularity&sortOrder=desc`);
+  return { songs: (d?.data?.songs || []).map(mapJioSaavnSong), total: d?.data?.total || 0 };
+}
+
+// Movie mode: find the album(s) whose name matches the query — exact match
+// preferred (so "singam" doesn't pull in "Singam 2" alongside it), falling
+// back to any whole-word match — then return every song on those albums.
+async function fetchSongsForMovie(query) {
+  const albums = await searchJioSaavnAlbums(query);
+  if (!albums.length) return [];
+  const qNorm = normalizeForMatch(query);
+  const exact   = albums.filter(a => normalizeForMatch(a.name) === qNorm);
+  const partial = albums.filter(a => fieldMatchesWholeWords(a.name, query));
+  const chosen  = (exact.length ? exact : partial).slice(0, 3);
+  const lists = await Promise.all(chosen.map(a => fetchJioSaavnAlbumSongs(a.id)));
+  const seen = new Set(), out = [];
+  for (const list of lists) for (const s of list) if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+  return out;
+}
+
+// Artist mode: resolve the best-matching artist (exact name match preferred),
+// so the request page can page through their songs.
+async function resolveJioSaavnArtist(query) {
+  const results = await searchJioSaavnArtists(query);
+  if (!results.length) return null;
+  const qNorm = normalizeForMatch(query);
+  return results.find(a => normalizeForMatch(a.name) === qNorm) || results[0];
 }
 
 function mapJioSaavnSong(s) {
@@ -3739,12 +3788,20 @@ function RequestSongPage({ token }) {
   const [query, setQuery]           = React.useState("");
   const [filterBy, setFilterBy]     = React.useState("title");
   const [language, setLanguage]     = React.useState("Tamil");
-  const [allResults, setAllResults] = React.useState([]);
+  const [results, setResults]       = React.useState([]);
   const [loading, setLoading]       = React.useState(false);
   const [addedIds, setAddedIds]     = React.useState(() => new Set());
   const [addingId, setAddingId]     = React.useState(null);
   const [toast, showToast]          = useToast();
   const debounceRef = React.useRef(null);
+
+  // Artist mode pages through the full discography via the JioSaavn API —
+  // the other two modes get everything back in one shot (a movie soundtrack
+  // and a title search are both naturally small/bounded).
+  const [artistId, setArtistId]     = React.useState(null);
+  const [artistPage, setArtistPage] = React.useState(0);
+  const [artistTotal, setArtistTotal] = React.useState(0);
+  const [artistNotFound, setArtistNotFound] = React.useState(false);
 
   React.useEffect(() => {
     (async () => {
@@ -3753,31 +3810,54 @@ function RequestSongPage({ token }) {
     })();
   }, [token]);
 
+  // Resolve the query into results whenever query/filter/language changes.
+  // For "artist" mode this only RESOLVES the artist (page-fetching is a
+  // separate effect below); for "title"/"movie" it fetches results directly.
   React.useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query.trim() || query.trim().length < 2) { setAllResults([]); return; }
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]); setArtistId(null); setArtistTotal(0); setArtistNotFound(false);
+      return;
+    }
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
-      const results = await searchSongs(query, language);
-      setAllResults(results);
-      setLoading(false);
+      if (filterBy === "title") {
+        const r = await searchSongs(q, language);
+        setResults(r); setArtistId(null); setArtistTotal(0); setArtistNotFound(false);
+        setLoading(false);
+      } else if (filterBy === "movie") {
+        const r = await fetchSongsForMovie(q);
+        setResults(r); setArtistId(null); setArtistTotal(0); setArtistNotFound(false);
+        setLoading(false);
+      } else { // artist
+        const artist = await resolveJioSaavnArtist(q);
+        setArtistPage(0);
+        if (!artist) {
+          setResults([]); setArtistId(null); setArtistTotal(0); setArtistNotFound(true);
+          setLoading(false);
+        } else {
+          setArtistNotFound(false);
+          setArtistId(artist.id); // song fetching happens in the effect below
+        }
+      }
     }, 600);
     return () => clearTimeout(debounceRef.current);
-  }, [query, language]);
+  }, [query, filterBy, language]);
 
-  // "Movie"/"Artist" modes narrow the pool down to ONLY that movie's or
-  // artist's songs — the search itself still runs on the typed text (so
-  // "3" as a movie search still surfaces its songs), but results whose
-  // album/artist doesn't actually match the query get dropped.
-  const displayResults = React.useMemo(() => {
-    if (filterBy === "title") return allResults;
-    const q = query.trim();
-    if (!q) return allResults;
-    return allResults.filter(s => {
-      const field = filterBy === "movie" ? (s.album || "") : (s.artist || s.singer || "");
-      return fieldMatchesWholeWords(field, q);
-    });
-  }, [allResults, filterBy, query]);
+  // Fetches a page of the resolved artist's songs — fires on first resolve
+  // AND whenever the user pages forward/back.
+  React.useEffect(() => {
+    if (filterBy !== "artist" || !artistId) return;
+    (async () => {
+      setLoading(true);
+      const { songs, total } = await fetchJioSaavnArtistSongsPage(artistId, artistPage);
+      setResults(songs); setArtistTotal(total);
+      setLoading(false);
+    })();
+  }, [filterBy, artistId, artistPage]);
+
+  const artistTotalPages = Math.max(1, Math.ceil(artistTotal / ARTIST_PAGE_SIZE));
 
   const handleAdd = async (song) => {
     setAddingId(song.id);
@@ -3831,26 +3911,35 @@ function RequestSongPage({ token }) {
           <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus
             placeholder={filterBy==="movie" ? "Search by movie name…" : filterBy==="artist" ? "Search by artist name…" : "Search for a song…"}
             className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center focus:border-violet-500 focus:outline-none"/>
-          <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
-            {LANGUAGES.map(l => (
-              <button key={l} onClick={()=>setLanguage(l)}
-                className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
-                {l}
-              </button>
-            ))}
-          </div>
+          {filterBy === "title" && (
+            <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
+              {LANGUAGES.map(l => (
+                <button key={l} onClick={()=>setLanguage(l)}
+                  className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          )}
+          {filterBy !== "title" && (
+            <p className="text-xs text-gray-600 text-center mt-2">
+              {filterBy === "movie" ? "Shows every song from that movie's soundtrack." : "Browse an artist's songs, page by page."}
+            </p>
+          )}
 
           {loading && <div className="flex justify-center py-8"><Spinner/></div>}
-          {!loading && query.trim().length >= 2 && displayResults.length === 0 && (
+          {!loading && query.trim().length >= 2 && results.length === 0 && (
             <p className="text-xs text-gray-600 text-center py-6">
-              {allResults.length > 0 && filterBy !== "title"
-                ? `No songs found for that ${filterBy}.`
-                : "No songs found."}
+              {filterBy === "artist" && artistNotFound
+                ? `No artist found matching "${query.trim()}".`
+                : filterBy !== "title"
+                  ? `No songs found for that ${filterBy}.`
+                  : "No songs found."}
             </p>
           )}
 
           <div className="space-y-2 mt-4">
-            {displayResults.slice(0, 25).map(song => {
+            {results.slice(0, 25).map(song => {
               const added = addedIds.has(song.id);
               return (
                 <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
@@ -3869,6 +3958,24 @@ function RequestSongPage({ token }) {
               );
             })}
           </div>
+
+          {filterBy === "artist" && artistId && artistTotal > ARTIST_PAGE_SIZE && (
+            <div className="flex items-center justify-between mt-5 pt-4 border-t border-[#1a1a2a]">
+              <button
+                onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
+                disabled={artistPage === 0 || loading}
+                className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                ← Previous
+              </button>
+              <span className="text-xs text-gray-500">Page {artistPage+1} of {artistTotalPages}</span>
+              <button
+                onClick={()=>setArtistPage(p=>p+1)}
+                disabled={artistPage+1 >= artistTotalPages || loading}
+                className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage+1>=artistTotalPages||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       </div>
       {toast && <div className="toast">{toast}</div>}
