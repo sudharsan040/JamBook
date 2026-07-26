@@ -2768,6 +2768,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
 // Pick 3–5 songs, spin a wheel, let it land on one and open its lyrics.
 function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
   const [numberInputs, setNumberInputs] = React.useState(["", "", "", "", ""]);
+  const [showNames, setShowNames]     = React.useState(false); // hidden by default — keep the pick a surprise
   const [phase, setPhase]             = React.useState("select"); // select | wheel
   const [rotation, setRotation]       = React.useState(0);
   const [spinning, setSpinning]       = React.useState(false);
@@ -2780,6 +2781,13 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
   const numberToSong = React.useMemo(() => {
     const map = {};
     songs.forEach((s, i) => { map[numbers ? numbers[i] : i + 1] = s; });
+    return map;
+  }, [songs, numbers]);
+  // ...and the reverse — a song's id back to its queue number, for display
+  // when names are hidden.
+  const songToNumber = React.useMemo(() => {
+    const map = {};
+    songs.forEach((s, i) => { map[s.id] = numbers ? numbers[i] : i + 1; });
     return map;
   }, [songs, numbers]);
   const maxNumber = numbers && numbers.length ? Math.max(...numbers) : songs.length;
@@ -2854,9 +2862,13 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
                   className="w-0 flex-1 min-w-0 text-center text-sm bg-[#1a1a2e] border border-[#2e2e44] rounded-lg py-2 text-gray-200 focus:border-violet-500 focus:outline-none"/>
               ))}
             </div>
+            <label className="flex items-center gap-2 text-xs text-gray-500 mb-3 cursor-pointer">
+              <input type="checkbox" checked={showNames} onChange={(e)=>setShowNames(e.target.checked)} className="accent-violet-600"/>
+              Show song names (keeps it a surprise when unchecked)
+            </label>
             <div className="text-xs text-gray-500 mb-4">
               {matchedSongs.length > 0
-                ? <>Spinning: <span className="text-gray-300">{matchedSongs.map(s => s.title).join(", ")}</span></>
+                ? <>Spinning: <span className="text-gray-300">{matchedSongs.map(s => showNames ? s.title : `#${songToNumber[s.id]}`).join(", ")}</span></>
                 : <>No numbers entered — spinning all {songs.length} active songs.</>}
               {invalidCount > 0 && (
                 <div className="text-amber-500 mt-1">{invalidCount} number{invalidCount > 1 ? "s" : ""} didn't match a song in the queue.</div>
@@ -2889,8 +2901,8 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
                   return (
                     <g key={s.id}>
                       <path d={wedgePath(start, end)} fill={AVATAR_COLORS[i % AVATAR_COLORS.length]} stroke="#0d0d18" strokeWidth="2"/>
-                      <text x={lx} y={ly} fill="white" fontSize="10" fontWeight="700" textAnchor="middle" dominantBaseline="middle">
-                        {(s.title || "").slice(0, 12)}
+                      <text x={lx} y={ly} fill="white" fontSize={showNames ? "10" : "14"} fontWeight="700" textAnchor="middle" dominantBaseline="middle">
+                        {showNames ? (s.title || "").slice(0, 12) : `#${songToNumber[s.id]}`}
                       </text>
                     </g>
                   );
@@ -2908,7 +2920,7 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
             {winner && (
               <div className="mt-5 text-center">
                 <div className="text-sm text-gray-400">🎉 Landed on</div>
-                <div className="text-lg font-bold text-violet-300">{winner.title}</div>
+                <div className="text-lg font-bold text-violet-300">{showNames ? winner.title : `Song #${songToNumber[winner.id]}`}</div>
                 <div className="text-xs text-gray-500 mt-1">Opening lyrics…</div>
               </div>
             )}
