@@ -142,6 +142,32 @@ This repo is set up to deploy itself automatically.
 4. **Enable GitHub Pages** (Settings → Pages → Source: **GitHub Actions**)
 5. Push any change to `main` → the workflow builds and deploys → site is live in ~45 seconds.
 
+### Optional: Audience Song Requests
+
+Lets anyone with a link search for a song and add it straight into a folder's
+live queue — no JamBook account needed. The link is per-folder and stable
+(generated once, reused forever). Requires the `folders` table above plus:
+
+```sql
+alter table public.folders add column if not exists request_token text unique;
+create index if not exists folders_request_idx on public.folders(request_token);
+create policy "request_read" on public.folders for select
+  using (request_token is not null);
+create policy "request_update" on public.folders for update
+  using (request_token is not null) with check (request_token is not null);
+```
+
+In the app: open a folder → **🎤 Request Songs** → copy the link and share it
+with your audience. They land on a bare search-and-add page at
+`?request=<token>`, never seeing the rest of the app.
+
+**Trade-offs worth knowing:** like the existing folder-share feature, anyone
+who has the link can act on it — there's no separate password, the link itself
+is the credential (a long random token, not guessable). Adding a song is a
+read-then-write on the folder's song list client-side, so two people
+submitting in the exact same instant could rarely clobber each other's
+addition — fine for a casual jam session, not built for high-concurrency use.
+
 ### Making changes
 Edit `src/app.jsx` and commit. The GitHub Action automatically:
 1. Installs esbuild + react + react-dom

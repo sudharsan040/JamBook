@@ -1233,6 +1233,34 @@ async function fetchShareByToken(token) {
   };
 }
 
+// ─── Audience song requests ────────────────────────────────────────────
+// A separate, stable token (distinct from share_token) that lets anyone with
+// the link add songs directly into the LIVE folder — no account needed.
+// Requires the `request_token` column + matching RLS policies (see README).
+async function fetchFolderByRequestToken(token) {
+  if (!HAS_SUPABASE || !token) return null;
+  const { data, error } = await sb.from("folders")
+    .select("id,name,songs").eq("request_token", token).limit(1).maybeSingle();
+  if (error || !data) return null;
+  return { id: data.id, name: data.name, songs: data.songs || [] };
+}
+
+// Read-modify-write append. Two people requesting in the same instant could
+// race and clobber each other's addition — acceptable for a casual jam-session
+// tool; not meant to be a high-concurrency queue.
+async function addSongViaRequestToken(token, song) {
+  if (!HAS_SUPABASE || !token) return { ok: false, error: "Not configured" };
+  const { data, error: readErr } = await sb.from("folders")
+    .select("songs").eq("request_token", token).limit(1).maybeSingle();
+  if (readErr || !data) return { ok: false, error: "Request link not found" };
+  const songs = data.songs || [];
+  if (songs.some(s => s.id === song.id)) return { ok: true, alreadyAdded: true };
+  const { error: writeErr } = await sb.from("folders")
+    .update({ songs: [...songs, song] }).eq("request_token", token);
+  if (writeErr) return { ok: false, error: writeErr.message };
+  return { ok: true };
+}
+
 const SHARE_URL_MAX = 60000;
 
 async function encodeShareLink(folder, user, songs) {
@@ -1473,6 +1501,7 @@ const db = {
         // Strip _shareLyrics from songs — only needed during share fetch.
         songs: (r.songs || []).map(s => { const c={...s}; delete c._shareLyrics; return c; }),
         shareCode:         r.share_token        || null,
+        requestToken:      r.request_token      || null,
         broadcastRoom:     r.broadcast_room     || null,
         originalOwnerId:   r.original_owner_id  || null,
         originalOwnerName: r.original_owner_name|| null,
@@ -1511,6 +1540,7 @@ const db = {
         name:                 folder.name,
         songs:                folder.songs,
         share_token:          folder.shareCode || null,
+        request_token:        folder.requestToken || null,
         broadcast_room:       folder.broadcastRoom     || null,
         original_owner_id:    folder.originalOwnerId   || null,
         original_owner_name:  folder.originalOwnerName || null,
@@ -1829,6 +1859,86 @@ function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoo
 
         <p className="text-xs text-gray-600 mt-4 leading-relaxed">
           Tip: Paste the link in any browser → it'll prompt to import the folder. No account required at the link source.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Moderator-side control for the audience song-request feature. Lazily
+// creates a stable request_token on first open (persisted immediately so the
+// link never changes on subsequent opens), then shows it for copy/share.
+function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken }) {
+  const [requestUrl, setRequestUrl] = React.useState("Generating link…");
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const base = window.location.origin + window.location.pathname;
+      if (folder.requestToken) {
+        if (alive) setRequestUrl(`${base}?request=${folder.requestToken}`);
+        return;
+      }
+      const token = newShareToken();
+      await onPersistRequestToken(folder.id, token);
+      if (alive) setRequestUrl(`${base}?request=${token}`);
+    })();
+    return () => { alive = false; };
+  }, [folder.id]);
+
+  const copy = () => {
+    navigator.clipboard.writeText(requestUrl)
+      .then(() => showToast("Request link copied!"))
+      .catch(() => showToast("Copy failed — select & copy manually"));
+  };
+
+  const shareNative = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `JamBook · Request a song`,
+          text:  `Request a song for "${folder.name}" — no account needed!`,
+          url:   requestUrl,
+        });
+      } catch {} // user cancelled — no-op
+    } else {
+      copy();
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="text-base font-bold text-white">🎤 Audience Request Link</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
+        </div>
+        <p className="text-sm text-gray-400 mb-1">Folder: <span className="text-violet-300 font-medium">{folder.name}</span></p>
+        <p className="text-xs text-gray-600 mb-5">Anyone with this link can search and add songs straight to this folder — no account needed. The link stays the same every time.</p>
+
+        <textarea
+          readOnly
+          value={requestUrl}
+          onFocus={e => e.target.select()}
+          rows={3}
+          className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-xl px-3 py-2 text-violet-300 text-xs font-mono mb-3 resize-none break-all"
+        />
+
+        <div className="flex gap-2">
+          <button onClick={copy}
+            className="flex-1 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+            📋 Copy Link
+          </button>
+          {typeof navigator !== "undefined" && navigator.share && (
+            <button onClick={shareNative}
+              className="flex-1 py-2.5 border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 rounded-xl text-sm font-semibold transition-all">
+              ↗ Share
+            </button>
+          )}
+        </div>
+
+        <p className="text-xs text-gray-600 mt-4 leading-relaxed">
+          Songs requested through this link land straight in the queue — reopen the session panel to see new arrivals.
         </p>
       </div>
     </div>
@@ -2969,7 +3079,9 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
 
 function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
-  broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount}) {
+  broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount,
+  showToast, onPersistRequestToken}) {
+  const [showRequestLink, setShowRequestLink] = React.useState(false);
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
@@ -3017,6 +3129,14 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             </button>
           )}
 
+          {HAS_SUPABASE && (
+            <button onClick={()=>setShowRequestLink(true)}
+              title="Get a link for the audience to request songs — no account needed"
+              className="text-xs px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/10 transition-all flex-shrink-0">
+              🎤 <span className="hidden sm:inline">Request Songs</span>
+            </button>
+          )}
+
           <button onClick={onAddCustom}
             title="Add your own lyrics"
             className="text-xs px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all flex-shrink-0">
@@ -3055,6 +3175,10 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
           </div>
         ))}
       </div>
+      {showRequestLink && (
+        <RequestLinkModal folder={folder} onClose={()=>setShowRequestLink(false)}
+          showToast={showToast} onPersistRequestToken={onPersistRequestToken}/>
+      )}
     </div>
   );
 }
@@ -3542,6 +3666,125 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
   );
 }
 
+// ─── Audience Request Page ─────────────────────────────────────────────
+// Fully standalone — no login, no sidebar, no other app state. Reached via
+// ?request=<token>. Anyone with the link can search and add a song straight
+// into the moderator's live folder; they never see the rest of the app.
+function RequestSongPage({ token }) {
+  const [folder, setFolder]         = React.useState(undefined); // undefined=loading, null=not found
+  const [query, setQuery]           = React.useState("");
+  const [language, setLanguage]     = React.useState("Tamil");
+  const [allResults, setAllResults] = React.useState([]);
+  const [loading, setLoading]       = React.useState(false);
+  const [addedIds, setAddedIds]     = React.useState(() => new Set());
+  const [addingId, setAddingId]     = React.useState(null);
+  const [toast, showToast]          = useToast();
+  const debounceRef = React.useRef(null);
+
+  React.useEffect(() => {
+    (async () => {
+      const f = await fetchFolderByRequestToken(token);
+      setFolder(f || null);
+    })();
+  }, [token]);
+
+  React.useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!query.trim() || query.trim().length < 2) { setAllResults([]); return; }
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      const results = await searchSongs(query, language);
+      setAllResults(results);
+      setLoading(false);
+    }, 600);
+    return () => clearTimeout(debounceRef.current);
+  }, [query, language]);
+
+  const handleAdd = async (song) => {
+    setAddingId(song.id);
+    const res = await addSongViaRequestToken(token, song);
+    setAddingId(null);
+    if (res.ok) {
+      setAddedIds(prev => new Set(prev).add(song.id));
+      showToast(res.alreadyAdded ? "Already in the queue" : `Requested "${song.title}"!`);
+    } else {
+      showToast(res.error || "Couldn't add — try again");
+    }
+  };
+
+  if (folder === undefined) {
+    return (
+      <div className="auth-bg min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin"/>
+      </div>
+    );
+  }
+
+  if (folder === null) {
+    return (
+      <div className="auth-bg min-h-screen flex flex-col items-center justify-center text-center px-6">
+        <div className="text-4xl mb-3">🔗</div>
+        <h1 className="text-lg font-bold text-white mb-1">Request link not found</h1>
+        <p className="text-sm text-gray-500">This link may be mistyped, or the session no longer exists.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <div className="px-4 sm:px-6 pt-6 pb-4 border-b border-[#1e1e2e] text-center">
+        <div className="text-2xl mb-1">🎤</div>
+        <h1 className="text-base sm:text-lg font-bold text-white">Requesting songs for</h1>
+        <div className="text-sm font-semibold text-violet-300">📁 {folder.name}</div>
+        <p className="text-xs text-gray-500 mt-1">Search a song and tap Add — it lands straight in the session queue.</p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
+        <div className="max-w-xl mx-auto w-full">
+          <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus
+            placeholder="Search for a song…"
+            className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center focus:border-violet-500 focus:outline-none"/>
+          <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
+            {LANGUAGES.map(l => (
+              <button key={l} onClick={()=>setLanguage(l)}
+                className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+
+          {loading && <div className="flex justify-center py-8"><Spinner/></div>}
+          {!loading && query.trim().length >= 2 && allResults.length === 0 && (
+            <p className="text-xs text-gray-600 text-center py-6">No songs found.</p>
+          )}
+
+          <div className="space-y-2 mt-4">
+            {allResults.slice(0, 25).map(song => {
+              const added = addedIds.has(song.id);
+              return (
+                <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {song.cover && <img src={song.cover} alt="" className="w-10 h-10 rounded-lg flex-shrink-0 object-cover"/>}
+                    <div className="min-w-0">
+                      <div className="font-semibold text-white truncate text-sm">{song.title}</div>
+                      <div className="text-xs text-gray-400 truncate">{song.artist} · {song.album}</div>
+                    </div>
+                  </div>
+                  <button onClick={()=>handleAdd(song)} disabled={added || addingId === song.id}
+                    className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
+                    {added ? "✓ Added" : addingId === song.id ? "…" : "➕ Add"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
 // ─── App Root ─────────────────────────────────────────────────────────
 function App() {
   // ─── ALL HOOKS MUST BE DECLARED HERE, BEFORE ANY CONDITIONAL RETURNS ───
@@ -3724,6 +3967,16 @@ function App() {
       return newF;
     }));
     if (updated) await db.updateFolder(user, updated);
+  };
+
+  // Persist a folder's audience-request token once (created lazily by
+  // RequestLinkModal) so the request link is stable across opens.
+  const persistRequestToken = async (fid, token) => {
+    const target = folders.find(f => f.id === fid);
+    if (!target) return;
+    const updated = { ...target, requestToken: token };
+    setFolders(f => f.map(x => x.id === fid ? updated : x));
+    try { await db.updateFolder(user, updated); } catch {}
   };
 
   const selectFolder = id => { setActiveFolderId(id); setView("folder"); };
@@ -4110,6 +4363,8 @@ function App() {
             followingBroadcast={followingBroadcast}
             onLeaveBroadcast={leaveBroadcast}
             viewerCount={viewerCount}
+            showToast={showToast}
+            onPersistRequestToken={persistRequestToken}
           />
         )}
       </main>
@@ -4187,6 +4442,13 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ?request=<token> bypasses the whole app (no login, no sidebar) — just the
+// audience song-request page. Checked once at mount, not inside App's state,
+// so a broken/expired token can never fall through into the authenticated UI.
+const requestToken = new URLSearchParams(window.location.search).get("request");
+
 ReactDOM.createRoot(document.getElementById("root")).render(
-  <ErrorBoundary><App/></ErrorBoundary>
+  <ErrorBoundary>
+    {requestToken ? <RequestSongPage token={requestToken}/> : <App/>}
+  </ErrorBoundary>
 );
