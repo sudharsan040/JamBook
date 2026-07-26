@@ -3724,6 +3724,16 @@ const REQUEST_FILTERS = [
   { value: "artist", label: "Artist" },
 ];
 
+// Every word in the query must appear as a WHOLE word in `field` — plain
+// substring matching would let "singam" match "Singamalai" (a different
+// movie that merely starts with the same letters).
+function fieldMatchesWholeWords(field, query) {
+  const qTokens = normalizeForMatch(query).split(" ").filter(Boolean);
+  if (!qTokens.length) return true;
+  const fieldTokens = new Set(normalizeForMatch(field).split(" ").filter(Boolean));
+  return qTokens.every(t => fieldTokens.has(t));
+}
+
 function RequestSongPage({ token }) {
   const [folder, setFolder]         = React.useState(undefined); // undefined=loading, null=not found
   const [query, setQuery]           = React.useState("");
@@ -3761,11 +3771,11 @@ function RequestSongPage({ token }) {
   // album/artist doesn't actually match the query get dropped.
   const displayResults = React.useMemo(() => {
     if (filterBy === "title") return allResults;
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return allResults;
     return allResults.filter(s => {
       const field = filterBy === "movie" ? (s.album || "") : (s.artist || s.singer || "");
-      return field.toLowerCase().includes(q);
+      return fieldMatchesWholeWords(field, q);
     });
   }, [allResults, filterBy, query]);
 
