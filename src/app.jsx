@@ -2687,6 +2687,10 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
   const [showFolderMenu,setFolderMenu] = React.useState(false);
   const scrollRef = React.useRef(null);
 
+  React.useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [song.id]);
+
   return (
     <div className="flex h-full overflow-hidden">
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
@@ -2804,6 +2808,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   // If the song carries its own customLyrics (user-added or user-edited),
   // skip API fetch entirely.
   React.useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setGoogleRoman(null); setRomanizing(false);
     if (hasCustomLyrics) {
       // Use native if provided, else fall back to the roman version as the "source" text.
