@@ -276,24 +276,46 @@ async function fetchJioSaavnArtistSongsPage(artistId, page) {
 // The API's own `language` query param is silently ignored (verified against
 // the live endpoint — passing language=hindi vs language=telugu returned
 // identical results), so a language filter has to be applied client-side.
-// That can thin out a raw page, so this scans forward through consecutive
-// raw pages (capped) until it collects a full visible page of matches.
-const ARTIST_SCAN_CAP = 8; // max raw pages to scan per visible page — bounds worst-case requests
+// That can thin a raw page down to very few (or zero) matches, so this scans
+// forward through consecutive raw pages — fetched in concurrent batches
+// (rather than one at a time) so a rare-language search doesn't feel like a
+// long hang — until it collects a full visible page of matches or the scan
+// cap is reached.
+const ARTIST_SCAN_CAP   = 24; // max raw pages to scan per visible page — bounds worst-case requests
+const ARTIST_SCAN_BATCH = 4;  // raw pages fetched concurrently per round
 async function fetchJioSaavnArtistPageFiltered(artistId, startRawPage, language) {
   let rawPage = startRawPage;
   let total = 0;
-  let failed = false;
+  let anyFailed = false;
+  let exhausted = false; // true only once we've genuinely run out of the artist's catalog
   const collected = [];
-  for (let scans = 0; collected.length < ARTIST_PAGE_SIZE && scans < ARTIST_SCAN_CAP; scans++) {
-    const { songs, total: t, failed: f } = await fetchJioSaavnArtistSongsPage(artistId, rawPage);
-    if (f && collected.length === 0) failed = true;
-    if (t) total = t;
-    if (!songs.length) break; // no more raw pages
-    collected.push(...(language === "All" ? songs : songs.filter(s => s.language === language)));
-    rawPage++;
-    if (songs.length < ARTIST_PAGE_SIZE) break; // that was the last raw page
+  let scans = 0;
+
+  while (collected.length < ARTIST_PAGE_SIZE && scans < ARTIST_SCAN_CAP && !exhausted) {
+    const batchSize = Math.min(ARTIST_SCAN_BATCH, ARTIST_SCAN_CAP - scans);
+    const pages = Array.from({ length: batchSize }, (_, i) => rawPage + i);
+    const results = await Promise.all(pages.map(p => fetchJioSaavnArtistSongsPage(artistId, p)));
+    rawPage += batchSize;
+    scans += batchSize;
+
+    for (const { songs, total: t, failed } of results) {
+      if (failed) anyFailed = true;
+      if (t) total = t;
+      if (!songs.length) { exhausted = true; break; }
+      collected.push(...(language === "All" ? songs : songs.filter(s => s.language === language)));
+      if (songs.length < ARTIST_PAGE_SIZE) { exhausted = true; break; }
+    }
   }
-  return { songs: collected.slice(0, ARTIST_PAGE_SIZE), nextRawPage: rawPage, total, failed };
+
+  return {
+    songs: collected.slice(0, ARTIST_PAGE_SIZE),
+    nextRawPage: rawPage,
+    total,
+    failed: anyFailed && collected.length === 0,
+    // More raw catalog may exist even if this particular page came up short
+    // (or empty) — only report "no more" when the source itself ran out.
+    hasMore: !exhausted,
+  };
 }
 
 // Movie mode: find the album(s) whose name matches the query — exact match
@@ -460,10 +482,10 @@ function useCatalogSearch({ query, mode, language }) {
       (async () => {
         setLoading(true);
         const startRaw = artistPageCursors[artistPage] ?? 0;
-        const { songs, nextRawPage, total, failed } = await fetchJioSaavnArtistPageFiltered(artistId, startRaw, language);
+        const { songs, nextRawPage, total, failed, hasMore } = await fetchJioSaavnArtistPageFiltered(artistId, startRaw, language);
         setResults(songs);
         setArtistTotal(total);
-        setArtistHasMore(songs.length === ARTIST_PAGE_SIZE);
+        setArtistHasMore(hasMore);
         setCatalogError(failed && !songs.length);
         setArtistPageCursors(prev => {
           if (prev[artistPage + 1] !== undefined) return prev;
