@@ -529,35 +529,41 @@ async function searchSongs(query, language = "All") {
   ]);
   const all = itunesBatches.flat();
 
-  // Dedupe across all three sources by a normalized "title|artist" key.
+  // Dedupe across all three sources. Sources like Spotify often index the
+  // SAME recording multiple times under different compilation/playlist
+  // "albums" (e.g. a movie's official soundtrack AND a "Whistle Podu" mix
+  // album), each with a slightly different subset/ordering of collaborator
+  // names — so an exact "title|artist string" key doesn't catch them. Two
+  // songs are treated as the same if the title matches and they share at
+  // least one artist name in common (order/extra collaborators don't matter).
   // Spotify goes first (most reliable, correct tagging), then JioSaavn
   // (still the best for Indian film catalogue tagging when Spotify doesn't
   // have something), then iTunes fills in whatever's still missing.
-  const dedupeKey = (t, a) =>
-    `${(t||"").toLowerCase().replace(/[^a-z0-9]/g,"")}|${(a||"").toLowerCase().replace(/[^a-z0-9]/g,"")}`;
+  const normTitle = (t) => (t || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const artistTokens = (a) => new Set(
+    (a || "").toLowerCase().split(/[,&]/).map(x => x.replace(/[^a-z0-9]/g, "")).filter(Boolean)
+  );
+  const isSameSong = (a, b) => {
+    if (normTitle(a.title) !== normTitle(b.title)) return false;
+    const ta = artistTokens(a.artist), tb = artistTokens(b.artist);
+    if (!ta.size || !tb.size) return true; // no artist info to compare — trust the title match
+    for (const t of ta) if (tb.has(t)) return true;
+    return false;
+  };
 
-  const seen = new Set();
-  const out  = [];
-  for (const song of spotifyResults) {
-    const key = dedupeKey(song.title, song.artist);
-    if (seen.has(key)) continue;
-    seen.add(key);
+  const out = [];
+  const addIfNew = (song) => {
+    if (out.some(existing => isSameSong(existing, song))) return;
     out.push(song);
-  }
+  };
+  for (const song of spotifyResults) addIfNew(song);
   for (const s of jioResults) {
     if (!s.id) continue;
-    const song = mapJioSaavnSong(s);
-    const key  = dedupeKey(song.title, song.artist);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(song);
+    addIfNew(mapJioSaavnSong(s));
   }
   for (const s of all) {
     if (!s.trackId) continue;
-    const key = dedupeKey(s.trackName, s.artistName);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
+    addIfNew({
       id:       `it_${s.trackId}`,
       type:     "live",
       itunesId: s.trackId,
