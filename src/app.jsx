@@ -200,10 +200,11 @@ async function fetchItunesArtistSongs(artistId) {
 // tagged with the correct movie as `album` and carry an explicit `language`
 // field, both far more reliable for Indian regional music than iTunes' generic
 // global catalogue (which has no language filter and mixes in unrelated
-// covers/compilations). Used as a primary source; iTunes still runs in
-// parallel as a fallback/supplement since this is an unofficial API with no
-// uptime guarantee.
-const JIOSAAVN_BASE = "https://saavn.sumit.co/api";
+// covers/compilations). Self-hosted on our own Cloudflare Worker (forked from
+// sumitkolhe/jiosaavn-api) after the shared public instance (saavn.sumit.co)
+// proved unreliable under load — same API shape, just no longer shared with
+// everyone else using that free instance.
+const JIOSAAVN_BASE = "https://jiosaavn-api.lssusan173.workers.dev/api";
 
 function capitalizeLang(l) {
   if (!l) return "";
