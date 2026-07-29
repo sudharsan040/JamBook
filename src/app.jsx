@@ -2974,6 +2974,15 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 )}
               </div>
 
+              {/* Mark this song completed (only when viewing a song inside a folder) */}
+              {activeFolder && onToggleCompleted && (
+                <button onClick={()=>onToggleCompleted(activeFolder.id, song.id)}
+                  title={song.completed ? "Mark as not completed" : "Mark as completed"}
+                  className={`text-xs px-2 py-1.5 rounded-lg border transition-all ${song.completed ? "bg-emerald-600/20 border-emerald-600/40 text-emerald-400" : "border-[#2e2e44] text-gray-400 hover:border-emerald-500 hover:text-emerald-400"}`}>
+                  {song.completed ? "✓" : "○"}<span className="hidden sm:inline ml-1">{song.completed ? "Completed" : "Complete"}</span>
+                </button>
+              )}
+
               {/* Share folder (only when viewing a song inside a folder) */}
               {activeFolder && onShareFolder && (
                 <button onClick={()=>onShareFolder(activeFolder)}
@@ -4555,6 +4564,10 @@ function App() {
       updated = newF;
       return newF;
     }));
+    // Keep the currently-open song's own completed flag in sync too — it's a
+    // separate piece of state from `folders`, so a toggle button on the song
+    // view itself would otherwise show stale state until you navigate away.
+    setActiveSong(prev => prev && prev.id === sid ? { ...prev, completed: !prev.completed } : prev);
     if (updated) await db.updateFolder(user, updated);
   };
 
