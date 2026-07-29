@@ -168,6 +168,50 @@ read-then-write on the folder's song list client-side, so two people
 submitting in the exact same instant could rarely clobber each other's
 addition — fine for a casual jam session, not built for high-concurrency use.
 
+### Optional: Song Archive (write-only)
+
+Silently upserts every song's title/artist/movie + both lyric scripts into
+Supabase as folders get built up, purely to seed a future self-hosted song
+database. The app never reads this table back — it's a one-way archive.
+Deduped by title+artist, and keeps writing indefinitely (no row cap) until the
+table itself reaches 300 MB — capped well under Supabase's 500 MB free-tier
+limit so the `folders` table and everything else the app needs always has
+room to keep working.
+
+```sql
+create table public.song_archive (
+  id uuid primary key default gen_random_uuid(),
+  dedupe_key text unique not null,
+  title text not null,
+  artist text,
+  movie text,
+  source text,
+  lyrics_native text,
+  lyrics_roman text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.song_archive enable row level security;
+create policy "anon_insert" on public.song_archive for insert to anon with check (true);
+create policy "anon_update" on public.song_archive for update to anon using (true) with check (true);
+-- Deliberately no select policy for anon — the client can write, never read.
+
+create or replace function public.song_archive_cap() returns trigger as $$
+begin
+  -- pg_total_relation_size includes the table's indexes/TOAST, not just row
+  -- bytes, so this tracks what actually counts against the 500 MB DB quota.
+  if pg_total_relation_size('public.song_archive') >= 300 * 1024 * 1024 then
+    return null; -- silently skip the insert once the 300 MB cap is hit
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger song_archive_cap_trigger
+  before insert on public.song_archive
+  for each row execute function public.song_archive_cap();
+```
+
 ### Making changes
 Edit `src/app.jsx` and commit. The GitHub Action automatically:
 1. Installs esbuild + react + react-dom

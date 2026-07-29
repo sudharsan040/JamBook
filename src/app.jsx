@@ -1823,6 +1823,45 @@ function setCachedLyrics(songId, data) {
   c[songId] = data;
   saveLyricsCache(c);
 }
+
+// ─── One-way song archive ──────────────────────────────────────────────
+// Write-only seed for a future self-hosted song database: every song that
+// gets lyrics (from search or custom entry) is upserted into Supabase's
+// `song_archive` table, deduped by title+artist. The app never reads this
+// table back — a DB-side trigger silently stops inserts once the table
+// itself hits 300 MB (no row-count limit), so there's no client-side size
+// check either. See README for the SQL to create the table.
+function songDedupeKey(title, artist) {
+  return `${(title || "").trim().toLowerCase()}|${(artist || "").trim().toLowerCase()}`;
+}
+async function archiveSong(song, { native, roman, source } = {}) {
+  if (!HAS_SUPABASE || !song?.title) return;
+  if (!native && !roman) return;
+  const dedupe_key = songDedupeKey(song.title, song.artist);
+  if (dedupe_key === "|") return;
+  try {
+    await sb.from("song_archive").upsert({
+      dedupe_key,
+      title:         song.title,
+      artist:        song.artist || song.singer || "",
+      movie:         song.album  || song.movie  || "",
+      source:        source || "unknown",
+      lyrics_native: native || null,
+      lyrics_roman:  roman  || null,
+      updated_at:    new Date().toISOString(),
+    }, { onConflict: "dedupe_key" });
+  } catch (e) {
+    console.warn("[archive]", e.message);
+  }
+}
+// Split native vs. romanized text out of a lyrics-cache blob for archiving.
+function archiveFromLyricsData(song, data) {
+  archiveSong(song, {
+    source: data.source,
+    native: data.nativeLyrics || (!data.alreadyRomanized && detectScript(data.lyrics) ? data.lyrics : null),
+    roman:  data.alreadyRomanized ? data.lyrics : (data.googleRoman || (!detectScript(data.lyrics) ? data.lyrics : null)),
+  });
+}
 // Pre-fetch lyrics silently and store in cache. Called when a song is added
 // to a folder, when a folder is loaded on app start, and when a shared folder
 // is imported. Also pre-caches the Google romanization so the user sees
@@ -1832,7 +1871,10 @@ async function preFetchLyrics(song) {
   if (song.customLyrics) return;                          // already user-edited
   const existing = getCachedLyrics(song.id);
   // Skip the fetch only if BOTH lyrics + romanization are already cached
-  if (existing && (existing.googleRoman || existing.alreadyRomanized || !detectScript(existing.lyrics))) return;
+  if (existing && (existing.googleRoman || existing.alreadyRomanized || !detectScript(existing.lyrics))) {
+    archiveFromLyricsData(song, existing);
+    return;
+  }
 
   try {
     let data = existing;
@@ -1846,9 +1888,10 @@ async function preFetchLyrics(song) {
       const native = detectScript(data.lyrics);
       if (native) {
         const roman = await googleRomanize(data.lyrics);
-        if (roman) setCachedLyrics(song.id, { ...data, googleRoman: roman });
+        if (roman) { data = { ...data, googleRoman: roman }; setCachedLyrics(song.id, data); }
       }
     }
+    archiveFromLyricsData(song, data);
   } catch (e) {
     console.warn("[prefetch]", song.title, "→", e.message);
   }
@@ -4660,6 +4703,11 @@ function App() {
 
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
     await db.updateFolder(user, updated);
+
+    archiveSong(
+      { title: data.title, artist: data.artist, album: data.album },
+      { native: data.customLyrics, roman: data.customLyricsRoman, source: "custom" }
+    );
 
     // If I'm broadcasting on this folder, push the lyrics edit to followers
     if (isBroadcasting && broadcastChannelRef.current && activeFolderId === folderId) {
