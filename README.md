@@ -173,10 +173,8 @@ addition — fine for a casual jam session, not built for high-concurrency use.
 Silently upserts every song's title/artist/movie + both lyric scripts into
 Supabase as folders get built up, purely to seed a future self-hosted song
 database. The app never reads this table back — it's a one-way archive.
-Deduped by title+artist, and keeps writing indefinitely (no row cap) until the
-table itself reaches 300 MB — capped well under Supabase's 500 MB free-tier
-limit so the `folders` table and everything else the app needs always has
-room to keep working.
+Deduped by title+artist, and a trigger stops inserts once the table hits 100
+rows.
 
 ```sql
 create table public.song_archive (
@@ -198,10 +196,8 @@ create policy "anon_update" on public.song_archive for update to anon using (tru
 
 create or replace function public.song_archive_cap() returns trigger as $$
 begin
-  -- pg_total_relation_size includes the table's indexes/TOAST, not just row
-  -- bytes, so this tracks what actually counts against the 500 MB DB quota.
-  if pg_total_relation_size('public.song_archive') >= 300 * 1024 * 1024 then
-    return null; -- silently skip the insert once the 300 MB cap is hit
+  if (select count(*) from public.song_archive) >= 100 then
+    return null; -- silently skip the insert once the 100-row cap is hit
   end if;
   return new;
 end;

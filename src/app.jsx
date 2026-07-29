@@ -1829,8 +1829,8 @@ function setCachedLyrics(songId, data) {
 // gets lyrics (from search or custom entry) is upserted into Supabase's
 // `song_archive` table, deduped by title+artist. The app never reads this
 // table back — a DB-side trigger silently stops inserts once the table
-// itself hits 300 MB (no row-count limit), so there's no client-side size
-// check either. See README for the SQL to create the table.
+// hits 100 rows, so there's no client-side count check either. See README
+// for the SQL to create the table.
 function songDedupeKey(title, artist) {
   return `${(title || "").trim().toLowerCase()}|${(artist || "").trim().toLowerCase()}`;
 }
