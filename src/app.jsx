@@ -4279,18 +4279,29 @@ function RequestSongPage({ token }) {
   const [language, setLanguage]     = React.useState("Tamil");
   const [addedIds, setAddedIds]     = React.useState(() => new Set());
   const [addingId, setAddingId]     = React.useState(null);
+  const [showQueue, setShowQueue]   = React.useState(false);
   const [toast, showToast]          = useToast();
 
   const { results, loading, artistNotFound, catalogError, artistActive,
           artistPage, setArtistPage, artistTotalPages, artistHasMore, artistTotal, languageFilterUnavailable } =
     useCatalogSearch({ query, mode: filterBy, language });
 
-  React.useEffect(() => {
-    (async () => {
-      const f = await fetchFolderByRequestToken(token);
-      setFolder(f || null);
-    })();
+  const refreshFolder = React.useCallback(async () => {
+    const f = await fetchFolderByRequestToken(token);
+    if (f) setFolder(f); else setFolder(prev => prev === undefined ? null : prev);
   }, [token]);
+
+  React.useEffect(() => {
+    refreshFolder();
+    // Poll so the "already added" list stays fresh as other people in the
+    // audience request songs too — no realtime channel for this bare page.
+    const id = setInterval(refreshFolder, 10000);
+    return () => clearInterval(id);
+  }, [refreshFolder]);
+
+  // Songs already in the session queue — from the host, or from anyone else
+  // using this same request link — so we can flag them in search results too.
+  const queuedIds = React.useMemo(() => new Set((folder?.songs || []).map(s => s.id)), [folder]);
 
   const handleAdd = async (song) => {
     setAddingId(song.id);
@@ -4299,6 +4310,7 @@ function RequestSongPage({ token }) {
     if (res.ok) {
       setAddedIds(prev => new Set(prev).add(song.id));
       showToast(res.alreadyAdded ? "Already in the queue" : `Requested "${song.title}"!`);
+      refreshFolder();
     } else {
       showToast(res.error || "Couldn't add — try again");
     }
@@ -4333,6 +4345,25 @@ function RequestSongPage({ token }) {
 
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         <div className="max-w-xl mx-auto w-full">
+          {folder.songs?.length > 0 && (
+            <div className="mb-4">
+              <button onClick={()=>setShowQueue(v=>!v)}
+                className="w-full flex items-center justify-between bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-2.5 text-sm text-gray-300 hover:border-violet-500/50 transition-all">
+                <span>📋 Already requested ({folder.songs.length})</span>
+                <span className="text-gray-500">{showQueue ? "▲" : "▼"}</span>
+              </button>
+              {showQueue && (
+                <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto">
+                  {folder.songs.map(s => (
+                    <div key={s.id} className="bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs">
+                      <span className="text-gray-200 font-medium">{s.title}</span>
+                      <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5 mb-2 justify-center">
             {REQUEST_FILTERS.map(f => (
               <button key={f.value} onClick={()=>setFilterBy(f.value)}
@@ -4379,7 +4410,7 @@ function RequestSongPage({ token }) {
 
           <div className="space-y-2 mt-4">
             {results.slice(0, 25).map(song => {
-              const added = addedIds.has(song.id);
+              const added = addedIds.has(song.id) || queuedIds.has(song.id);
               return (
                 <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
