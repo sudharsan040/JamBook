@@ -4346,15 +4346,15 @@ function RequestSongPage({ token }) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <div className="px-4 sm:px-6 pt-6 pb-4 border-b border-[#1e1e2e] text-center">
+    <div className="min-h-screen md:h-screen flex flex-col md:overflow-hidden">
+      <div className="px-4 sm:px-6 pt-6 pb-4 border-b border-[#1e1e2e] text-center flex-shrink-0">
         <div className="text-2xl mb-1">🎤</div>
         <h1 className="text-base sm:text-lg font-bold text-white">Requesting songs for</h1>
         <div className="text-sm font-semibold text-violet-300">📁 {folder.name}</div>
         <p className="text-xs text-gray-500 mt-1">Search a song and tap Add — it lands straight in the session queue.</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto md:overflow-hidden px-4 sm:px-6 py-4">
+      <div className="flex-1 overflow-y-auto md:overflow-hidden md:min-h-0 px-4 sm:px-6 py-4">
         <div className="max-w-5xl mx-auto w-full md:h-full flex flex-col md:flex-row gap-6">
           {/* ── Left: request a song ─────────────────────────────────── */}
           <div className="md:flex-1 md:min-h-0 flex flex-col">
