@@ -4312,7 +4312,7 @@ function RequestSongPage({ token }) {
 
   const handleAdd = async (song) => {
     if (queuedKeys.has(songMatchKey(song))) {
-      showToast(`"${song.title}" is already requested`);
+      showToast(`"${song.title}" is already in the queue`);
       return;
     }
     setAddingId(song.id);
@@ -4354,10 +4354,10 @@ function RequestSongPage({ token }) {
         <p className="text-xs text-gray-500 mt-1">Search a song and tap Add — it lands straight in the session queue.</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
-        <div className="max-w-5xl mx-auto w-full grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="flex-1 overflow-y-auto md:overflow-hidden px-4 sm:px-6 py-4">
+        <div className="max-w-5xl mx-auto w-full md:h-full flex flex-col md:flex-row gap-6">
           {/* ── Left: request a song ─────────────────────────────────── */}
-          <div>
+          <div className="md:flex-1 md:min-h-0 flex flex-col">
             <div className="flex flex-wrap gap-1.5 mb-2 justify-center">
               {REQUEST_FILTERS.map(f => (
                 <button key={f.value} onClick={()=>setFilterBy(f.value)}
@@ -4386,81 +4386,85 @@ function RequestSongPage({ token }) {
               <p className="text-xs text-gray-600 text-center mt-2">Browse an artist's songs, page by page — pick a language to narrow it down.</p>
             )}
 
-            {loading && <div className="flex justify-center py-8"><Spinner/></div>}
-            {!loading && filterBy === "artist" && languageFilterUnavailable && (
-              <p className="text-xs text-amber-500/80 text-center py-2">Language filtering isn't available for this artist right now — try "All", or search again in a bit.</p>
-            )}
-            {!loading && query.trim().length >= 2 && results.length === 0 && !(filterBy === "artist" && languageFilterUnavailable) && (
-              <p className="text-xs text-gray-600 text-center py-6">
-                {catalogError
-                  ? "Search is temporarily unavailable — please try again in a moment."
-                  : filterBy === "artist" && artistNotFound
-                    ? `No artist found matching "${query.trim()}".`
-                    : filterBy !== "title"
-                      ? `No songs found for that ${filterBy}.`
-                      : "No songs found."}
-              </p>
-            )}
+            <div className="md:flex-1 md:min-h-0 md:overflow-y-auto md:pr-1">
+              {loading && <div className="flex justify-center py-8"><Spinner/></div>}
+              {!loading && filterBy === "artist" && languageFilterUnavailable && (
+                <p className="text-xs text-amber-500/80 text-center py-2">Language filtering isn't available for this artist right now — try "All", or search again in a bit.</p>
+              )}
+              {!loading && query.trim().length >= 2 && results.length === 0 && !(filterBy === "artist" && languageFilterUnavailable) && (
+                <p className="text-xs text-gray-600 text-center py-6">
+                  {catalogError
+                    ? "Search is temporarily unavailable — please try again in a moment."
+                    : filterBy === "artist" && artistNotFound
+                      ? `No artist found matching "${query.trim()}".`
+                      : filterBy !== "title"
+                        ? `No songs found for that ${filterBy}.`
+                        : "No songs found."}
+                </p>
+              )}
 
-            <div className="space-y-2 mt-4">
-              {results.slice(0, 25).map(song => {
-                const added = addedIds.has(song.id) || queuedKeys.has(songMatchKey(song));
-                return (
-                  <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {song.cover && <img src={song.cover} alt="" className="w-10 h-10 rounded-lg flex-shrink-0 object-cover"/>}
-                      <div className="min-w-0">
-                        <div className="font-semibold text-white truncate text-sm">{song.title}</div>
-                        <div className="text-xs text-gray-400 truncate">{song.artist} · {song.album}</div>
+              <div className="space-y-2 mt-4">
+                {results.slice(0, 25).map(song => {
+                  const added = addedIds.has(song.id) || queuedKeys.has(songMatchKey(song));
+                  return (
+                    <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        {song.cover && <img src={song.cover} alt="" className="w-10 h-10 rounded-lg flex-shrink-0 object-cover"/>}
+                        <div className="min-w-0">
+                          <div className="font-semibold text-white truncate text-sm">{song.title}</div>
+                          <div className="text-xs text-gray-400 truncate">{song.artist} · {song.album}</div>
+                        </div>
                       </div>
+                      <button onClick={()=>handleAdd(song)} disabled={added || addingId === song.id}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
+                        {added ? "✓ Added" : addingId === song.id ? "…" : "➕ Add"}
+                      </button>
                     </div>
-                    <button onClick={()=>handleAdd(song)} disabled={added || addingId === song.id}
-                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
-                      {added ? "✓ Added" : addingId === song.id ? "…" : "➕ Add"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-
-            {artistActive && (artistTotalPages ? artistTotalPages > 1 : (artistPage > 0 || artistHasMore)) && (
-              <div className="flex items-center justify-between mt-5 pt-4 border-t border-[#1a1a2a]">
-                <button
-                  onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
-                  disabled={artistPage === 0 || loading}
-                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
-                  ← Previous
-                </button>
-                <span className="text-xs text-gray-500">
-                  {artistTotalPages ? `Page ${artistPage+1} of ${artistTotalPages} · ${artistTotal} songs` : `Page ${artistPage+1}`}
-                </span>
-                <button
-                  onClick={()=>setArtistPage(p=>p+1)}
-                  disabled={(artistTotalPages ? artistPage+1 >= artistTotalPages : !artistHasMore) || loading}
-                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
-                  Next →
-                </button>
+                  );
+                })}
               </div>
-            )}
+
+              {artistActive && (artistTotalPages ? artistTotalPages > 1 : (artistPage > 0 || artistHasMore)) && (
+                <div className="flex items-center justify-between mt-5 pt-4 border-t border-[#1a1a2a]">
+                  <button
+                    onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
+                    disabled={artistPage === 0 || loading}
+                    className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                    ← Previous
+                  </button>
+                  <span className="text-xs text-gray-500">
+                    {artistTotalPages ? `Page ${artistPage+1} of ${artistTotalPages} · ${artistTotal} songs` : `Page ${artistPage+1}`}
+                  </span>
+                  <button
+                    onClick={()=>setArtistPage(p=>p+1)}
+                    disabled={(artistTotalPages ? artistPage+1 >= artistTotalPages : !artistHasMore) || loading}
+                    className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                    Next →
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* ── Right: already requested ─────────────────────────────── */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2 text-center md:text-left">
-              📋 Already requested {folder.songs?.length ? `(${folder.songs.length})` : ""}
+          {/* ── Right: in queue ──────────────────────────────────────── */}
+          <div className="md:flex-1 md:min-h-0 flex flex-col md:border-l md:border-[#1e1e2e] md:pl-6">
+            <h2 className="text-sm font-semibold text-gray-300 mb-2 text-center md:text-left flex-shrink-0">
+              📋 In Queue {folder.songs?.length ? `(${folder.songs.length})` : ""}
             </h2>
-            {(!folder.songs || folder.songs.length === 0) ? (
-              <p className="text-xs text-gray-600 text-center md:text-left py-4">No songs requested yet — be the first!</p>
-            ) : (
-              <div className="space-y-1.5">
-                {[...folder.songs].reverse().map(s => (
-                  <div key={s.id} className="bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs">
-                    <span className="text-gray-200 font-medium">{s.title}</span>
-                    <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="md:flex-1 md:min-h-0 md:overflow-y-auto md:pr-1">
+              {(!folder.songs || folder.songs.length === 0) ? (
+                <p className="text-xs text-gray-600 text-center md:text-left py-4">No songs requested yet — be the first!</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {[...folder.songs].reverse().map(s => (
+                    <div key={s.id} className="bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs">
+                      <span className="text-gray-200 font-medium">{s.title}</span>
+                      <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
