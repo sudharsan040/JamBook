@@ -4353,11 +4353,11 @@ function RequestSongPage({ token }) {
                 <span className="text-gray-500">{showQueue ? "▲" : "▼"}</span>
               </button>
               {showQueue && (
-                <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto">
-                  {folder.songs.map(s => (
-                    <div key={s.id} className="bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs">
-                      <span className="text-gray-200 font-medium">{s.title}</span>
-                      <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
+                <div className="mt-2 grid grid-cols-2 gap-1.5 max-h-64 overflow-y-auto">
+                  {[...folder.songs].reverse().map(s => (
+                    <div key={s.id} className="bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs min-w-0">
+                      <div className="text-gray-200 font-medium truncate">{s.title}</div>
+                      <div className="text-gray-500 truncate">{s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</div>
                     </div>
                   ))}
                 </div>
