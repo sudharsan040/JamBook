@@ -2688,12 +2688,12 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           </button>
         </div>
 
-        {/* Renumber the queue — pushes completed songs out of the numbered
-            range so the remaining ones always read 1..N with no gaps. */}
+        {/* Randomizes pending song order and pushes completed songs out of
+            the numbered range, so the remaining ones read 1..N with no gaps. */}
         {onShuffleQueue && (
           <div className="mt-2">
-            <button onClick={()=>onShuffleQueue(folder.id)} disabled={completed.length===0}
-              title={completed.length===0 ? "No completed songs to clear out of the numbering" : "Renumber remaining songs 1..N"}
+            <button onClick={()=>onShuffleQueue(folder.id)} disabled={pending.length<2}
+              title={pending.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
               className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
               🔀 Shuffle Numbers
             </button>
@@ -4679,15 +4679,20 @@ function App() {
     if (updated) await db.updateFolder(user, updated);
   };
 
-  // Compacts queue numbers by moving completed songs to the end (stable —
-  // relative order within each group is unchanged), so the pending songs
-  // that remain always number 1..N with no gaps left by completed ones.
+  // Randomizes the order of pending songs and moves completed ones to the
+  // end, so the numbers that remain always read 1..N with no gaps left by
+  // completed songs — e.g. 10 songs, #8 completed, shuffle → 9 songs, 1-9.
   const shuffleQueueNumbers = async (fid) => {
     let updated;
     setFolders(f => f.map(x => {
       if (x.id !== fid) return x;
       const pending   = x.songs.filter(s => !s.completed);
       const completed = x.songs.filter(s => s.completed);
+      // Fisher-Yates shuffle of the pending order
+      for (let i = pending.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pending[i], pending[j]] = [pending[j], pending[i]];
+      }
       updated = { ...x, songs: [...pending, ...completed] };
       return updated;
     }));
