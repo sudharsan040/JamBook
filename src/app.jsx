@@ -4339,7 +4339,8 @@ function RequestSongPage({ token }) {
   // using this same request link — so we can flag them in search results too.
   // Matched by name+artist+movie rather than id, since the same song can turn
   // up under a different id per source (Spotify vs JioSaavn vs iTunes).
-  const queuedKeys = React.useMemo(() => new Set((folder?.songs || []).map(songMatchKey)), [folder]);
+  const queuedKeys    = React.useMemo(() => new Set((folder?.songs || []).map(songMatchKey)), [folder]);
+  const completedKeys = React.useMemo(() => new Set((folder?.songs || []).filter(s => s.completed).map(songMatchKey)), [folder]);
 
   const handleAdd = async (song) => {
     if (queuedKeys.has(songMatchKey(song))) {
@@ -4436,7 +4437,9 @@ function RequestSongPage({ token }) {
 
               <div className="space-y-2 mt-4">
                 {results.slice(0, 25).map(song => {
-                  const added = addedIds.has(song.id) || queuedKeys.has(songMatchKey(song));
+                  const key = songMatchKey(song);
+                  const completed = completedKeys.has(key);
+                  const added = !completed && (addedIds.has(song.id) || queuedKeys.has(key));
                   return (
                     <div key={song.id} className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-xl px-4 py-3 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
@@ -4446,9 +4449,9 @@ function RequestSongPage({ token }) {
                           <div className="text-xs text-gray-400 truncate">{song.artist} · {song.album}</div>
                         </div>
                       </div>
-                      <button onClick={()=>handleAdd(song)} disabled={added || addingId === song.id}
-                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
-                        {added ? "✓ Added" : addingId === song.id ? "…" : "➕ Add"}
+                      <button onClick={()=>handleAdd(song)} disabled={completed || added || addingId === song.id}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${completed ? "bg-gray-700/30 text-gray-400 border border-gray-600/40" : added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
+                        {completed ? "✓ Completed" : added ? "✓ Added" : addingId === song.id ? "…" : "➕ Add"}
                       </button>
                     </div>
                   );
@@ -4485,16 +4488,30 @@ function RequestSongPage({ token }) {
             <div className="md:flex-1 md:min-h-0 md:overflow-y-auto md:pr-1">
               {(!folder.songs || folder.songs.length === 0) ? (
                 <p className="text-xs text-gray-600 text-center md:text-left py-4">No songs requested yet — be the first!</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {[...folder.songs].reverse().map(s => (
-                    <div key={s.id} className="bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs">
-                      <span className="text-gray-200 font-medium">{s.title}</span>
-                      <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              ) : (() => {
+                const pending   = [...folder.songs].filter(s => !s.completed).reverse();
+                const completed = [...folder.songs].filter(s => s.completed).reverse();
+                const row = s => (
+                  <div key={s.id}
+                    className={`bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs ${s.completed ? "opacity-50" : ""}`}>
+                    <span className={`text-gray-200 font-medium ${s.completed ? "line-through" : ""}`}>{s.completed ? "✓ " : ""}{s.title}</span>
+                    <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
+                  </div>
+                );
+                return (
+                  <div className="space-y-1.5">
+                    {pending.map(row)}
+                    {completed.length > 0 && (
+                      <>
+                        <div className="text-xs text-gray-600 font-semibold uppercase tracking-wider pt-2 pb-1 border-t border-[#1a1a2a] mt-2">
+                          ✓ Completed ({completed.length})
+                        </div>
+                        {completed.map(row)}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
