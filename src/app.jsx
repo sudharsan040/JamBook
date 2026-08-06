@@ -2649,7 +2649,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
 
 function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
-  broadcastModerator,collapsed,onToggleCollapse}) {
+  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
   const [queueSearch, setQueueSearch] = React.useState("");
@@ -2687,6 +2687,18 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
             🎲 Spin
           </button>
         </div>
+
+        {/* Renumber the queue — pushes completed songs out of the numbered
+            range so the remaining ones always read 1..N with no gaps. */}
+        {onShuffleQueue && (
+          <div className="mt-2">
+            <button onClick={()=>onShuffleQueue(folder.id)} disabled={completed.length===0}
+              title={completed.length===0 ? "No completed songs to clear out of the numbering" : "Renumber remaining songs 1..N"}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+              🔀 Shuffle Numbers
+            </button>
+          </div>
+        )}
 
         {/* Broadcast controls — only when the user owns the folder */}
         {canBroadcast && (
@@ -2759,7 +2771,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
 }
 
 // ─── Curated Song View ────────────────────────────────────────────────
-function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse}) {
+function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse,onShuffleQueue}) {
   const [showChords,setShowChords]   = React.useState(true);
   const [script,setScript]           = React.useState("roman");
   const [showFolderMenu,setFolderMenu] = React.useState(false);
@@ -2840,7 +2852,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         </div>
       </div>
       {activeFolder&&folderSongs&&folderSongs.length>0&&(
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse}/>
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse} onShuffleQueue={onShuffleQueue}/>
       )}
     </div>
   );
@@ -2865,7 +2877,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
-  queueCollapsed, onToggleQueueCollapse}) {
+  queueCollapsed, onToggleQueueCollapse, onShuffleQueue}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -3181,6 +3193,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           broadcastModerator={broadcastModerator}
           collapsed={queueCollapsed}
           onToggleCollapse={onToggleQueueCollapse}
+          onShuffleQueue={onShuffleQueue}
         />
       )}
 
@@ -3745,7 +3758,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 }
 
 // ─── Search Page ──────────────────────────────────────────────────────
-function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onStartBroadcast}) {
+function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onRenameFolder,onStartBroadcast}) {
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
@@ -4100,6 +4113,17 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                               📡 Start Broadcast
                             </button>
                           )}
+                          {onRenameFolder && (
+                            <button
+                              onClick={()=>{
+                                const name = window.prompt("Rename folder", f.name);
+                                if (name && name.trim() && name.trim() !== f.name) onRenameFolder(f.id, name.trim());
+                                setOpenFolderMenu(null);
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all border-t border-[#2e2e44]">
+                              ✏ Rename
+                            </button>
+                          )}
                           {onDeleteFolder && (
                             <button
                               onClick={()=>{
@@ -4174,7 +4198,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────
-function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDeleteFolder,onShareFolder,onShowImport,activeView,onGoSearch,collapsed,onToggleCollapse,onLogout}) {
+function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDeleteFolder,onRenameFolder,onShareFolder,onShowImport,activeView,onGoSearch,collapsed,onToggleCollapse,onLogout}) {
   const [newName,setNewName]   = React.useState("");
   const [creating,setCreating] = React.useState(false);
 
@@ -4239,6 +4263,13 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
             </span>
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
               <button onClick={e=>{e.stopPropagation();onShareFolder(f);}} title="Share" className="text-gray-600 hover:text-violet-400 text-xs px-1 transition-all">↗</button>
+              {onRenameFolder && (
+                <button onClick={e=>{
+                  e.stopPropagation();
+                  const name = window.prompt("Rename folder", f.name);
+                  if (name && name.trim() && name.trim() !== f.name) onRenameFolder(f.id, name.trim());
+                }} title="Rename" className="text-gray-600 hover:text-violet-400 text-xs px-1 transition-all">✏</button>
+              )}
               <button onClick={e=>{e.stopPropagation();onDeleteFolder(f.id);}} className="text-gray-600 hover:text-red-400 text-xs px-1 transition-all">✕</button>
             </div>
           </div>
@@ -4617,6 +4648,33 @@ function App() {
     setFolders(f => f.filter(x => x.id !== id));
     if (activeFolderId === id) { setView("search"); setActiveFolderId(null); }
     await db.deleteFolder(user, id);
+  };
+
+  const renameFolder = async (id, name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    let updated;
+    setFolders(f => f.map(x => {
+      if (x.id !== id) return x;
+      updated = { ...x, name: trimmed };
+      return updated;
+    }));
+    if (updated) await db.updateFolder(user, updated);
+  };
+
+  // Compacts queue numbers by moving completed songs to the end (stable —
+  // relative order within each group is unchanged), so the pending songs
+  // that remain always number 1..N with no gaps left by completed ones.
+  const shuffleQueueNumbers = async (fid) => {
+    let updated;
+    setFolders(f => f.map(x => {
+      if (x.id !== fid) return x;
+      const pending   = x.songs.filter(s => !s.completed);
+      const completed = x.songs.filter(s => s.completed);
+      updated = { ...x, songs: [...pending, ...completed] };
+      return updated;
+    }));
+    if (updated) await db.updateFolder(user, updated);
   };
 
   const addToFolder = async (fid, song) => {
@@ -5005,7 +5063,7 @@ function App() {
       {showSidebar && (
         <Sidebar
           user={user} folders={folders} activeFolderId={activeFolderId}
-          onSelectFolder={selectFolder} onCreateFolder={createFolder} onDeleteFolder={deleteFolder}
+          onSelectFolder={selectFolder} onCreateFolder={createFolder} onDeleteFolder={deleteFolder} onRenameFolder={renameFolder}
           onShareFolder={setShareTarget} onShowImport={()=>setShowImport(true)}
           activeView={view} onGoSearch={()=>{setView("search");setActiveFolderId(null);}}
           collapsed={sidebarCollapsed} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)}
@@ -5014,7 +5072,7 @@ function App() {
       )}
       <main className="flex-1 overflow-hidden flex flex-col min-w-0">
         {view==="search"&&(
-          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onStartBroadcast={requestStartBroadcast}/>
+          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onRenameFolder={renameFolder} onStartBroadcast={requestStartBroadcast}/>
         )}
         {view==="song"&&activeSong&&activeSong.type==="curated"&&(
           <CuratedSongView
@@ -5023,6 +5081,7 @@ function App() {
             onToggleCompleted={toggleSongCompleted}
             lyricsScale={lyricsScale} onLyricsScaleChange={setLyricsScale}
             queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
+            onShuffleQueue={shuffleQueueNumbers}
           />
         )}
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
@@ -5045,6 +5104,7 @@ function App() {
             lyricsRefreshTick={lyricsRefreshTick}
             lyricsScale={lyricsScale} onLyricsScaleChange={setLyricsScale}
             queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
+            onShuffleQueue={shuffleQueueNumbers}
           />
         )}
         {view==="folder"&&activeFolder&&(
