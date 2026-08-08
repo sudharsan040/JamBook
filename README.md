@@ -224,32 +224,38 @@ create policy "anon_read" on public.song_archive for select to anon using (true)
 
 ### Optional: Song Archive → Google Sheet sync
 
-Settings → paste a Google Sheet ID → **🔄 Sync to Google Sheet** overwrites
-that one sheet with the current archive every time you click it — same doc,
-always up to date, not a new file per click. One-time setup:
+Settings → **⬆ Upload** overwrites one Google Sheet with the current archive
+every time you click it — same doc, always up to date, no config visible in
+the app at all (no Sheet ID field, no sign-in). Everything lives server-side
+in `jambook-proxy` (the same Cloudflare Worker used for Spotify), using a
+Google **service account** (a robot credential — no popup, no per-user
+consent, nothing a visitor to the app ever sees or touches). One-time setup:
 
-1. **Google Cloud Console** → [console.cloud.google.com](https://console.cloud.google.com)
-   → create a project (or use an existing one) → **APIs & Services → Library**
-   → enable **Google Sheets API**.
-2. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
-   → Application type **Web application** → under **Authorized JavaScript
-   origins** add your site's origin, e.g. `https://sudharsan040.github.io`
-   (no path, no trailing slash) → Create. Copy the **Client ID**.
-3. **Add GitHub Secret**: `GOOGLE_CLIENT_ID` = that Client ID (same place as
-   `SUPABASE_URL` — Settings → Secrets and variables → Actions).
-4. **Create a blank Google Sheet** you own, open it, and copy the ID out of
-   its URL: `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`.
-   Paste that into Settings in the app.
-5. Push any change (or re-run the workflow) so the build picks up the new
-   secret, then click **Sync** — first click opens a Google sign-in popup
-   asking you to grant access to that one sheet; after that it's a single
-   click per sync.
+1. **Google Cloud Console** → enable **Google Sheets API** for a project (same
+   place as any other Google API).
+2. **IAM & Admin → Service Accounts → Create Service Account** → no roles
+   needed → **Keys → Add Key → Create new key → JSON** → download it. You
+   need its `client_email` and `private_key` fields.
+3. **Share your Google Sheet** with that `client_email` as **Editor** (Share
+   button, like sharing with a person).
+4. **Add to `jambook-proxy`'s Cloudflare secrets** (Workers & Pages → the
+   Worker → Settings → Variables and Secrets):
+   - `GOOGLE_SA_EMAIL` — the `client_email` value
+   - `GOOGLE_SA_PRIVATE_KEY` — the `private_key` value, including the
+     `-----BEGIN/END PRIVATE KEY-----` lines
+   - `GOOGLE_SHEET_ID` — the sheet's ID from its URL
+5. **Add a `/sheets-sync` route** to the Worker that signs a JWT as the
+   service account, exchanges it for an access token, reads `song_archive`
+   from Supabase, and overwrites the sheet. (Ask Claude for the exact code —
+   it was handed off separately since it lives in the Worker's own repo, not
+   this one.)
 
-**Trade-off worth knowing:** the OAuth Client ID ends up visible in the
-built JS bundle — that's expected for browser apps (Google gates access by
-the authorized origin above, not by keeping the ID secret), but it does mean
-anyone could see it in devtools. It only grants the *ability to ask a user to
-sign in*; it can't read or write anything without that user's own consent.
+**Why a service account instead of OAuth sign-in:** an earlier version had
+each user sign in with their own Google account via a browser popup — it
+worked, but was flaky (popups getting silently blocked, "unverified app"
+warnings) and exposed the Sheet ID in the app. A service account is a robot
+identity your Worker authenticates as directly — no human interaction, no
+popup, and both the Sheet ID and credentials stay server-side.
 
 ### Making changes
 Edit `src/app.jsx` and commit. The GitHub Action automatically:

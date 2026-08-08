@@ -33,62 +33,20 @@ const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
   : null;
 const HAS_SUPABASE = !!sb;
 
-// ─── Google Sheets export (song archive → a real, always-current sheet) ──
-// `process.env.GOOGLE_CLIENT_ID` is a LITERAL reference esbuild replaces at
-// build time, same as the Supabase constants above. This is an OAuth 2.0
-// Web Client ID — not a secret (it's meant to be visible in a browser app;
-// Google gates it by authorized JS origin, not by keeping it hidden).
-const GOOGLE_CLIENT_ID   = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-const HAS_GOOGLE_SHEETS  = !!GOOGLE_CLIENT_ID;
+// ─── Google Sheets sync (song archive → a real, always-current sheet) ────
+// Entirely server-side: jambook-proxy (same Worker used for Spotify) holds
+// a Google service-account key + the target Sheet ID as secrets, and does
+// the whole read-from-Supabase + write-to-Sheet round trip itself. The
+// frontend only ever sees a single button — no OAuth popup, no Sheet ID,
+// no per-user sign-in.
+const SHEETS_SYNC_URL = SPOTIFY_PROXY_BASE ? `${SPOTIFY_PROXY_BASE}/sheets-sync` : "";
+const HAS_SHEETS_SYNC  = !!SHEETS_SYNC_URL;
 
-// Lazily creates one GIS token client and reuses it across export clicks —
-// only re-prompts the Google consent popup if there's no valid token yet.
-let _gsiTokenClient = null;
-let _gsiAccessToken = null;
-function getGoogleAccessToken() {
-  return new Promise((resolve, reject) => {
-    if (!HAS_GOOGLE_SHEETS) { reject(new Error("Google Sheets isn't configured")); return; }
-    if (!window.google?.accounts?.oauth2) { reject(new Error("Google sign-in script hasn't loaded yet — try again in a moment")); return; }
-    if (!_gsiTokenClient) {
-      _gsiTokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope:     GOOGLE_SHEETS_SCOPE,
-        callback:  (resp) => {
-          if (resp.error) { reject(new Error(resp.error)); return; }
-          _gsiAccessToken = resp.access_token;
-          resolve(_gsiAccessToken);
-        },
-      });
-    } else {
-      _gsiTokenClient.callback = (resp) => {
-        if (resp.error) { reject(new Error(resp.error)); return; }
-        _gsiAccessToken = resp.access_token;
-        resolve(_gsiAccessToken);
-      };
-    }
-    // Blank prompt = reuse an existing Google session silently if one's
-    // still valid; only shows the consent popup when actually needed.
-    _gsiTokenClient.requestAccessToken({ prompt: _gsiAccessToken ? "" : "consent" });
-  });
-}
-
-// Overwrites the whole sheet with the given rows (header + data) — full
-// replace rather than append, so the sheet always exactly mirrors the
-// archive's current state with no leftover/stale rows or duplicates.
-async function writeGoogleSheet(sheetId, accessToken, rows) {
-  const range = "A1:Z10000";
-  const clearRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values/${range}:clear`,
-    { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  if (!clearRes.ok) throw new Error(`Couldn't clear sheet (${clearRes.status})`);
-  const writeRes = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values/A1?valueInputOption=RAW`,
-    { method: "PUT", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ values: rows }) }
-  );
-  if (!writeRes.ok) throw new Error(`Couldn't write sheet (${writeRes.status})`);
+async function syncSongArchiveToSheet() {
+  const res = await fetch(SHEETS_SYNC_URL);
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.ok) throw new Error(json?.error || `Sync failed (${res.status})`);
+  return json.count;
 }
 
 // Supabase Auth needs an email — we synthesise one from the username
@@ -2326,8 +2284,7 @@ function AuthPage({onLogin}) {
 // ─── Settings Modal ──────────────────────────────────────────────────
 function SettingsModal({ onClose, showToast }) {
   const [settings, setLocal] = React.useState(() => getSettings());
-  const [sheetIdDraft, setSheetIdDraft] = React.useState(() => getSettings().googleSheetId || "");
-  const [syncing, setSyncing] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
 
   const update = (patch) => {
     const next = { ...settings, ...patch };
@@ -2336,32 +2293,18 @@ function SettingsModal({ onClose, showToast }) {
     showToast("Setting saved");
   };
 
-  // Overwrites the same Google Sheet every time — one live doc that always
-  // mirrors song_archive's current state, rather than a new file per click.
-  const syncToGoogleSheet = async () => {
-    const sheetId = sheetIdDraft.trim();
-    if (!sheetId) { showToast("Paste a Google Sheet ID first"); return; }
-    if (!HAS_SUPABASE) { showToast("Supabase isn't configured"); return; }
-    setSyncing(true);
+  // The Worker holds the service-account key + target Sheet ID — this button
+  // just asks it to sync; nothing Google-related happens in the browser.
+  const uploadArchive = async () => {
+    setUploading(true);
     try {
-      if (sheetId !== settings.googleSheetId) update({ googleSheetId: sheetId });
-      const accessToken = await getGoogleAccessToken();
-
-      const { data, error } = await sb.from("song_archive")
-        .select("title,artist,movie,source,lyrics_native,lyrics_roman,created_at,updated_at")
-        .order("title");
-      if (error) throw error;
-
-      const header = ["Title","Artist","Movie","Source","Lyrics (Native)","Lyrics (Romanized)","Added","Last Updated"];
-      const rows = [header, ...(data || []).map(r => [r.title, r.artist, r.movie, r.source, r.lyrics_native, r.lyrics_roman, r.created_at, r.updated_at])];
-
-      await writeGoogleSheet(sheetId, accessToken, rows);
-      showToast(`Synced ${data?.length || 0} songs to your Google Sheet`);
+      const count = await syncSongArchiveToSheet();
+      showToast(`Uploaded ${count} songs`);
     } catch (e) {
-      showToast(e.message || "Sync failed — try again");
+      showToast(e.message || "Upload failed — try again");
       console.warn("[archive-sheet-sync]", e.message);
     } finally {
-      setSyncing(false);
+      setUploading(false);
     }
   };
 
@@ -2407,20 +2350,15 @@ function SettingsModal({ onClose, showToast }) {
           Changes take effect on the next song you open. Cached songs unaffected.
         </p>
 
-        {HAS_SUPABASE && HAS_GOOGLE_SHEETS && (
+        {HAS_SHEETS_SYNC && (
           <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
-            <label className="text-xs text-gray-400 font-medium block mb-2">Song archive → Google Sheet</label>
-            <input value={sheetIdDraft} onChange={e=>setSheetIdDraft(e.target.value)}
-              placeholder="Paste the Sheet ID from its URL"
-              className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-white placeholder-gray-500 text-xs mb-2 focus:border-violet-500 focus:outline-none"/>
-            <button onClick={syncToGoogleSheet} disabled={syncing}
+            <label className="text-xs text-gray-400 font-medium block mb-2">Song archive</label>
+            <button onClick={uploadArchive} disabled={uploading}
               className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-              {syncing ? "Syncing…" : "🔄 Sync to Google Sheet"}
+              {uploading ? "Uploading…" : "⬆ Upload"}
             </button>
             <p className="text-xs text-gray-600 mt-2 text-center">
-              Overwrites the same sheet every time — one live doc that always
-              matches the archive, not a new file per click. First click asks
-              you to sign in with Google.
+              Updates the same sheet every time — always current, no duplicates.
             </p>
           </div>
         )}

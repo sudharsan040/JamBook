@@ -52,10 +52,9 @@ jobs:
 
       - name: Build app JS
         env:
-          SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:     ${{ secrets.SUPABASE_KEY }}
-          CORS_PROXY_URL:   ${{ secrets.CORS_PROXY_URL }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+          CORS_PROXY_URL: ${{ secrets.CORS_PROXY_URL }}
         run: node build.mjs
 
       - name: Upload Pages artifact
