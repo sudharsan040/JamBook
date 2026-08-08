@@ -2266,14 +2266,55 @@ function AuthPage({onLogin}) {
 
 // ─── Share / Import modals ────────────────────────────────────────────
 // ─── Settings Modal ──────────────────────────────────────────────────
+// Turns a value into a safe CSV field (quotes it if it contains a comma,
+// quote, or newline; doubles up any internal quotes).
+function csvField(v) {
+  const s = (v ?? "").toString();
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 function SettingsModal({ onClose, showToast }) {
   const [settings, setLocal] = React.useState(() => getSettings());
+  const [exporting, setExporting] = React.useState(false);
 
   const update = (patch) => {
     const next = { ...settings, ...patch };
     setLocal(next);
     saveSettings(next);
     showToast("Setting saved");
+  };
+
+  // Pulls every row out of song_archive and downloads it as a fresh CSV —
+  // on-demand rather than a background schedule, so the file is always
+  // exactly current as of the moment you click it.
+  const exportArchive = async () => {
+    if (!HAS_SUPABASE) { showToast("Supabase isn't configured"); return; }
+    setExporting(true);
+    try {
+      const { data, error } = await sb.from("song_archive")
+        .select("title,artist,movie,source,lyrics_native,lyrics_roman,created_at,updated_at")
+        .order("title");
+      if (error) throw error;
+      if (!data || !data.length) { showToast("Archive is empty — nothing to export"); return; }
+
+      const header = ["Title","Artist","Movie","Source","Lyrics (Native)","Lyrics (Romanized)","Added","Last Updated"];
+      const rows = data.map(r => [r.title, r.artist, r.movie, r.source, r.lyrics_native, r.lyrics_roman, r.created_at, r.updated_at]);
+      const csv = [header, ...rows].map(row => row.map(csvField).join(",")).join("\r\n");
+
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" }); // BOM so Excel reads UTF-8 correctly
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url;
+      a.download = `jambook-song-archive-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      showToast(`Exported ${data.length} songs`);
+    } catch (e) {
+      showToast("Export failed — try again");
+      console.warn("[archive-export]", e.message);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const sources = [
@@ -2317,6 +2358,19 @@ function SettingsModal({ onClose, showToast }) {
         <p className="text-xs text-gray-600 mt-5 text-center">
           Changes take effect on the next song you open. Cached songs unaffected.
         </p>
+
+        {HAS_SUPABASE && (
+          <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
+            <label className="text-xs text-gray-400 font-medium block mb-2">Song archive</label>
+            <button onClick={exportArchive} disabled={exporting}
+              className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+              {exporting ? "Exporting…" : "⬇ Export as CSV"}
+            </button>
+            <p className="text-xs text-gray-600 mt-2 text-center">
+              Downloads every archived song's title/artist/movie/source/lyrics as of right now.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
