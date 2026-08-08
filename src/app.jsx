@@ -1860,7 +1860,10 @@ async function archiveSong(song, { native, roman, source } = {}) {
   const dedupe_key = songMatchKey(song);
   if (dedupe_key === "||") return;
   try {
-    await sb.from("song_archive").upsert({
+    // Supabase's client doesn't throw on a REST-level rejection (RLS denial,
+    // bad column, etc.) — it resolves normally with `error` populated, so
+    // that has to be checked explicitly or failures go completely silent.
+    const { error } = await sb.from("song_archive").upsert({
       dedupe_key,
       title:         song.title,
       artist:        song.artist || song.singer || "",
@@ -1870,6 +1873,7 @@ async function archiveSong(song, { native, roman, source } = {}) {
       lyrics_roman:  roman  || null,
       updated_at:    new Date().toISOString(),
     }, { onConflict: "dedupe_key" });
+    if (error) console.warn("[archive]", error.code, error.message);
   } catch (e) {
     console.warn("[archive]", e.message);
   }
