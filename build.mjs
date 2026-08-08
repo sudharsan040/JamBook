@@ -12,9 +12,10 @@ await esbuild.build({
   // Inject secrets as string literals at build time.
   define: {
     "process.env.NODE_ENV":       JSON.stringify("production"),
-    "process.env.SUPABASE_URL":   JSON.stringify(process.env.SUPABASE_URL   || ""),
-    "process.env.SUPABASE_KEY":   JSON.stringify(process.env.SUPABASE_KEY   || ""),
-    "process.env.CORS_PROXY_URL": JSON.stringify(process.env.CORS_PROXY_URL || ""),
+    "process.env.SUPABASE_URL":     JSON.stringify(process.env.SUPABASE_URL     || ""),
+    "process.env.SUPABASE_KEY":     JSON.stringify(process.env.SUPABASE_KEY     || ""),
+    "process.env.CORS_PROXY_URL":   JSON.stringify(process.env.CORS_PROXY_URL   || ""),
+    "process.env.GOOGLE_CLIENT_ID": JSON.stringify(process.env.GOOGLE_CLIENT_ID || ""),
   },
   // Safety net: if any `process.env.SOMETHING` slips through (e.g. a library
   // imports it expecting a Node runtime), give the bundle a stub `process`

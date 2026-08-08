@@ -222,6 +222,35 @@ set dedupe_key = lower(trim(title)) || '|' || lower(trim(coalesce(artist,''))) |
 create policy "anon_read" on public.song_archive for select to anon using (true);
 ```
 
+### Optional: Song Archive → Google Sheet sync
+
+Settings → paste a Google Sheet ID → **🔄 Sync to Google Sheet** overwrites
+that one sheet with the current archive every time you click it — same doc,
+always up to date, not a new file per click. One-time setup:
+
+1. **Google Cloud Console** → [console.cloud.google.com](https://console.cloud.google.com)
+   → create a project (or use an existing one) → **APIs & Services → Library**
+   → enable **Google Sheets API**.
+2. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+   → Application type **Web application** → under **Authorized JavaScript
+   origins** add your site's origin, e.g. `https://sudharsan040.github.io`
+   (no path, no trailing slash) → Create. Copy the **Client ID**.
+3. **Add GitHub Secret**: `GOOGLE_CLIENT_ID` = that Client ID (same place as
+   `SUPABASE_URL` — Settings → Secrets and variables → Actions).
+4. **Create a blank Google Sheet** you own, open it, and copy the ID out of
+   its URL: `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`.
+   Paste that into Settings in the app.
+5. Push any change (or re-run the workflow) so the build picks up the new
+   secret, then click **Sync** — first click opens a Google sign-in popup
+   asking you to grant access to that one sheet; after that it's a single
+   click per sync.
+
+**Trade-off worth knowing:** the OAuth Client ID ends up visible in the
+built JS bundle — that's expected for browser apps (Google gates access by
+the authorized origin above, not by keeping the ID secret), but it does mean
+anyone could see it in devtools. It only grants the *ability to ask a user to
+sign in*; it can't read or write anything without that user's own consent.
+
 ### Making changes
 Edit `src/app.jsx` and commit. The GitHub Action automatically:
 1. Installs esbuild + react + react-dom

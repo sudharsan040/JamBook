@@ -33,6 +33,64 @@ const sb = (SUPABASE_URL && SUPABASE_KEY && window.supabase)
   : null;
 const HAS_SUPABASE = !!sb;
 
+// ─── Google Sheets export (song archive → a real, always-current sheet) ──
+// `process.env.GOOGLE_CLIENT_ID` is a LITERAL reference esbuild replaces at
+// build time, same as the Supabase constants above. This is an OAuth 2.0
+// Web Client ID — not a secret (it's meant to be visible in a browser app;
+// Google gates it by authorized JS origin, not by keeping it hidden).
+const GOOGLE_CLIENT_ID   = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const HAS_GOOGLE_SHEETS  = !!GOOGLE_CLIENT_ID;
+
+// Lazily creates one GIS token client and reuses it across export clicks —
+// only re-prompts the Google consent popup if there's no valid token yet.
+let _gsiTokenClient = null;
+let _gsiAccessToken = null;
+function getGoogleAccessToken() {
+  return new Promise((resolve, reject) => {
+    if (!HAS_GOOGLE_SHEETS) { reject(new Error("Google Sheets isn't configured")); return; }
+    if (!window.google?.accounts?.oauth2) { reject(new Error("Google sign-in script hasn't loaded yet — try again in a moment")); return; }
+    if (!_gsiTokenClient) {
+      _gsiTokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope:     GOOGLE_SHEETS_SCOPE,
+        callback:  (resp) => {
+          if (resp.error) { reject(new Error(resp.error)); return; }
+          _gsiAccessToken = resp.access_token;
+          resolve(_gsiAccessToken);
+        },
+      });
+    } else {
+      _gsiTokenClient.callback = (resp) => {
+        if (resp.error) { reject(new Error(resp.error)); return; }
+        _gsiAccessToken = resp.access_token;
+        resolve(_gsiAccessToken);
+      };
+    }
+    // Blank prompt = reuse an existing Google session silently if one's
+    // still valid; only shows the consent popup when actually needed.
+    _gsiTokenClient.requestAccessToken({ prompt: _gsiAccessToken ? "" : "consent" });
+  });
+}
+
+// Overwrites the whole sheet with the given rows (header + data) — full
+// replace rather than append, so the sheet always exactly mirrors the
+// archive's current state with no leftover/stale rows or duplicates.
+async function writeGoogleSheet(sheetId, accessToken, rows) {
+  const range = "A1:Z10000";
+  const clearRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values/${range}:clear`,
+    { method: "POST", headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!clearRes.ok) throw new Error(`Couldn't clear sheet (${clearRes.status})`);
+  const writeRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values/A1?valueInputOption=RAW`,
+    { method: "PUT", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ values: rows }) }
+  );
+  if (!writeRes.ok) throw new Error(`Couldn't write sheet (${writeRes.status})`);
+}
+
 // Supabase Auth needs an email — we synthesise one from the username
 const usernameToEmail = u => `${u.toLowerCase().replace(/[^a-z0-9_]/g,"_")}@jambook.app`;
 
@@ -2266,16 +2324,10 @@ function AuthPage({onLogin}) {
 
 // ─── Share / Import modals ────────────────────────────────────────────
 // ─── Settings Modal ──────────────────────────────────────────────────
-// Turns a value into a safe CSV field (quotes it if it contains a comma,
-// quote, or newline; doubles up any internal quotes).
-function csvField(v) {
-  const s = (v ?? "").toString();
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 function SettingsModal({ onClose, showToast }) {
   const [settings, setLocal] = React.useState(() => getSettings());
-  const [exporting, setExporting] = React.useState(false);
+  const [sheetIdDraft, setSheetIdDraft] = React.useState(() => getSettings().googleSheetId || "");
+  const [syncing, setSyncing] = React.useState(false);
 
   const update = (patch) => {
     const next = { ...settings, ...patch };
@@ -2284,36 +2336,32 @@ function SettingsModal({ onClose, showToast }) {
     showToast("Setting saved");
   };
 
-  // Pulls every row out of song_archive and downloads it as a fresh CSV —
-  // on-demand rather than a background schedule, so the file is always
-  // exactly current as of the moment you click it.
-  const exportArchive = async () => {
+  // Overwrites the same Google Sheet every time — one live doc that always
+  // mirrors song_archive's current state, rather than a new file per click.
+  const syncToGoogleSheet = async () => {
+    const sheetId = sheetIdDraft.trim();
+    if (!sheetId) { showToast("Paste a Google Sheet ID first"); return; }
     if (!HAS_SUPABASE) { showToast("Supabase isn't configured"); return; }
-    setExporting(true);
+    setSyncing(true);
     try {
+      if (sheetId !== settings.googleSheetId) update({ googleSheetId: sheetId });
+      const accessToken = await getGoogleAccessToken();
+
       const { data, error } = await sb.from("song_archive")
         .select("title,artist,movie,source,lyrics_native,lyrics_roman,created_at,updated_at")
         .order("title");
       if (error) throw error;
-      if (!data || !data.length) { showToast("Archive is empty — nothing to export"); return; }
 
       const header = ["Title","Artist","Movie","Source","Lyrics (Native)","Lyrics (Romanized)","Added","Last Updated"];
-      const rows = data.map(r => [r.title, r.artist, r.movie, r.source, r.lyrics_native, r.lyrics_roman, r.created_at, r.updated_at]);
-      const csv = [header, ...rows].map(row => row.map(csvField).join(",")).join("\r\n");
+      const rows = [header, ...(data || []).map(r => [r.title, r.artist, r.movie, r.source, r.lyrics_native, r.lyrics_roman, r.created_at, r.updated_at])];
 
-      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" }); // BOM so Excel reads UTF-8 correctly
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href = url;
-      a.download = `jambook-song-archive-${new Date().toISOString().slice(0,10)}.csv`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
-      showToast(`Exported ${data.length} songs`);
+      await writeGoogleSheet(sheetId, accessToken, rows);
+      showToast(`Synced ${data?.length || 0} songs to your Google Sheet`);
     } catch (e) {
-      showToast("Export failed — try again");
-      console.warn("[archive-export]", e.message);
+      showToast(e.message || "Sync failed — try again");
+      console.warn("[archive-sheet-sync]", e.message);
     } finally {
-      setExporting(false);
+      setSyncing(false);
     }
   };
 
@@ -2359,15 +2407,20 @@ function SettingsModal({ onClose, showToast }) {
           Changes take effect on the next song you open. Cached songs unaffected.
         </p>
 
-        {HAS_SUPABASE && (
+        {HAS_SUPABASE && HAS_GOOGLE_SHEETS && (
           <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
-            <label className="text-xs text-gray-400 font-medium block mb-2">Song archive</label>
-            <button onClick={exportArchive} disabled={exporting}
+            <label className="text-xs text-gray-400 font-medium block mb-2">Song archive → Google Sheet</label>
+            <input value={sheetIdDraft} onChange={e=>setSheetIdDraft(e.target.value)}
+              placeholder="Paste the Sheet ID from its URL"
+              className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-white placeholder-gray-500 text-xs mb-2 focus:border-violet-500 focus:outline-none"/>
+            <button onClick={syncToGoogleSheet} disabled={syncing}
               className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-              {exporting ? "Exporting…" : "⬇ Export as CSV"}
+              {syncing ? "Syncing…" : "🔄 Sync to Google Sheet"}
             </button>
             <p className="text-xs text-gray-600 mt-2 text-center">
-              Downloads every archived song's title/artist/movie/source/lyrics as of right now.
+              Overwrites the same sheet every time — one live doc that always
+              matches the archive, not a new file per click. First click asks
+              you to sign in with Google.
             </p>
           </div>
         )}
