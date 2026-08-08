@@ -1887,6 +1887,20 @@ function archiveFromLyricsData(song, data) {
   });
 }
 
+// Backfills the archive for songs that already carry custom lyrics — either
+// fully custom entries (type "custom") or a live song with user-edited
+// lyrics attached. preFetchLyrics/preFetchFolderSongs deliberately skip
+// these (there's nothing to fetch), so without this they'd only ever reach
+// the archive at the exact moment someone hits Save in the lyrics editor —
+// never on a plain folder load/reopen, unlike every other song type.
+function archiveCustomSongs(songs) {
+  if (!Array.isArray(songs)) return;
+  for (const s of songs) {
+    if (!s || (!s.customLyrics && !s.customLyricsRoman)) continue;
+    archiveSong(s, { native: s.customLyrics, roman: s.customLyricsRoman, source: "custom" });
+  }
+}
+
 // One batched lookup against song_archive for a set of songs — used only
 // when importing a shared/request-linked folder, as a faster-than-live-fetch
 // tier for any song the sharer hadn't already cached (and thus couldn't
@@ -4669,7 +4683,10 @@ function App() {
       }
       setFolders(fs || []);
       const allSongs = (fs || []).flatMap(f => f.songs || []);
-      if (allSongs.length) preFetchFolderSongs(allSongs).catch(() => {});
+      if (allSongs.length) {
+        archiveCustomSongs(allSongs);
+        preFetchFolderSongs(allSongs).catch(() => {});
+      }
     })();
   }, [user?.id]);
 
@@ -4726,6 +4743,7 @@ function App() {
     setFolders([guestFolder]);
     setActiveFolderId(guestFolder.id);
     setView("folder");
+    archiveCustomSongs(songs);
     fillLyricsFromArchive(songs).then(() => preFetchFolderSongs(songs)).catch(() => {});
   }, [user, pendingShare]);
 
@@ -4975,6 +4993,7 @@ function App() {
       showToast(`Imported ${songs.length} songs`);
     }
     // Pre-fetch anything still missing (not embedded, not archived) in background
+    archiveCustomSongs(songs);
     preFetchFolderSongs(songs).catch(() => {});
   };
 
