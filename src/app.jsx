@@ -1904,10 +1904,13 @@ async function preFetchLyrics(song) {
 }
 
 // Batch pre-fetch every song in a list, with concurrency limit so we don't
-// flood the network when a folder has 50+ songs.
+// flood the network when a folder has 50+ songs. Skips anything already in
+// the lyrics cache outright — this is what a shared/imported folder relies
+// on to keep the exact source (tamil2lyrics/lrclib/own lyrics) the sharer
+// had, instead of re-fetching and possibly resolving to a different one.
 async function preFetchFolderSongs(songs, concurrency = 5) {
   if (!Array.isArray(songs) || !songs.length) return;
-  const queue = songs.filter(s => s && s.type === "live" && !s.customLyrics);
+  const queue = songs.filter(s => s && s.type === "live" && !s.customLyrics && !getCachedLyrics(s.id));
   if (!queue.length) return;
   let cursor = 0;
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
