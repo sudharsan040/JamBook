@@ -1825,15 +1825,13 @@ function setCachedLyrics(songId, data) {
 }
 
 // ─── One-way song archive ──────────────────────────────────────────────
-// Write-only seed for a future self-hosted song database: every song that
-// gets lyrics (from search or custom entry) is upserted into Supabase's
-// `song_archive` table, deduped by title+artist. The app never reads this
-// table back — a DB-side trigger silently stops inserts once the table
-// hits 100 rows, so there's no client-side count check either. See README
-// for the SQL to create the table.
-function songDedupeKey(title, artist) {
-  return `${(title || "").trim().toLowerCase()}|${(artist || "").trim().toLowerCase()}`;
-}
+// Seed for a future self-hosted song database: every song that gets lyrics
+// (from search or custom entry) is upserted into Supabase's `song_archive`
+// table, deduped by title+artist+movie. Writing has no cap on song count —
+// a DB-side trigger silently stops inserts once the table hits 100 rows.
+// Reading is scoped narrowly: only shared/imported folders consult it (see
+// fetchArchivedLyrics below), never general search or normal folder use.
+// See README for the SQL to create the table + read policy.
 // Same-song match by name+artist+movie (not id) — different sources
 // (Spotify/JioSaavn/iTunes) mint different ids for the same actual song.
 function songMatchKey(s) {
@@ -1843,8 +1841,8 @@ function songMatchKey(s) {
 async function archiveSong(song, { native, roman, source } = {}) {
   if (!HAS_SUPABASE || !song?.title) return;
   if (!native && !roman) return;
-  const dedupe_key = songDedupeKey(song.title, song.artist);
-  if (dedupe_key === "|") return;
+  const dedupe_key = songMatchKey(song);
+  if (dedupe_key === "||") return;
   try {
     await sb.from("song_archive").upsert({
       dedupe_key,
@@ -1867,6 +1865,43 @@ function archiveFromLyricsData(song, data) {
     native: data.nativeLyrics || (!data.alreadyRomanized && detectScript(data.lyrics) ? data.lyrics : null),
     roman:  data.alreadyRomanized ? data.lyrics : (data.googleRoman || (!detectScript(data.lyrics) ? data.lyrics : null)),
   });
+}
+
+// One batched lookup against song_archive for a set of songs — used only
+// when importing a shared/request-linked folder, as a faster-than-live-fetch
+// tier for any song the sharer hadn't already cached (and thus couldn't
+// embed lyrics for in the share payload). Writes hits straight into the
+// local lyrics cache; a song with a cache hit here never touches the live
+// Spotify/JioSaavn/iTunes/lrclib/tamil2lyrics chain at all.
+async function fillLyricsFromArchive(songs) {
+  if (!HAS_SUPABASE || !Array.isArray(songs) || !songs.length) return;
+  const targets = songs.filter(s => s && s.type === "live" && !s.customLyrics && !getCachedLyrics(s.id));
+  if (!targets.length) return;
+  const keyToSongs = {};
+  for (const s of targets) {
+    const k = songMatchKey(s);
+    (keyToSongs[k] ||= []).push(s);
+  }
+  try {
+    const { data, error } = await sb.from("song_archive")
+      .select("dedupe_key,source,lyrics_native,lyrics_roman")
+      .in("dedupe_key", Object.keys(keyToSongs));
+    if (error || !data) return;
+    for (const row of data) {
+      const matches = keyToSongs[row.dedupe_key];
+      if (!matches) continue;
+      const cacheEntry = {
+        lyrics:           row.lyrics_native || row.lyrics_roman,
+        source:           row.source || "archive",
+        nativeLyrics:     row.lyrics_native || undefined,
+        googleRoman:      row.lyrics_native ? (row.lyrics_roman || undefined) : undefined,
+        alreadyRomanized: !row.lyrics_native && !!row.lyrics_roman,
+      };
+      for (const s of matches) setCachedLyrics(s.id, cacheEntry);
+    }
+  } catch (e) {
+    console.warn("[archive-read]", e.message);
+  }
 }
 // Pre-fetch lyrics silently and store in cache. Called when a song is added
 // to a folder, when a folder is loaded on app start, and when a shared folder
@@ -4640,7 +4675,7 @@ function App() {
     setFolders([guestFolder]);
     setActiveFolderId(guestFolder.id);
     setView("folder");
-    preFetchFolderSongs(songs).catch(() => {});
+    fillLyricsFromArchive(songs).then(() => preFetchFolderSongs(songs)).catch(() => {});
   }, [user, pendingShare]);
 
   const logout = async () => {
@@ -4860,15 +4895,16 @@ function App() {
 
     // If the share link included embedded lyrics, write them straight into the
     // local lyrics cache so songs open instantly with zero fetch needed.
-    let preCachedCount = 0;
     if (entry.lyricsCache && typeof entry.lyricsCache === "object") {
       for (const [songId, data] of Object.entries(entry.lyricsCache)) {
-        if (data && data.lyrics) {
-          setCachedLyrics(songId, data);
-          preCachedCount++;
-        }
+        if (data && data.lyrics) setCachedLyrics(songId, data);
       }
     }
+
+    // For anything the sharer hadn't cached (so couldn't embed above), try
+    // our own song_archive next — still much faster than a live fetch, and
+    // means the shared folder doesn't depend on the sharer's device state.
+    await fillLyricsFromArchive(songs);
 
     const newF = await db.createFolder(user, `${entry.folderName} (${entry.ownerName})`);
     newF.songs = songs;
@@ -4881,12 +4917,13 @@ function App() {
     setPendingShare(null);
     clearShareFromUrl();
 
-    if (preCachedCount) {
-      showToast(`Imported ${songs.length} songs — ${preCachedCount} ready instantly`);
+    const readyCount = songs.filter(s => s.type !== "live" || s.customLyrics || getCachedLyrics(s.id)).length;
+    if (readyCount) {
+      showToast(`Imported ${songs.length} songs — ${readyCount} ready instantly`);
     } else {
       showToast(`Imported ${songs.length} songs`);
     }
-    // Pre-fetch any remaining songs (those without embedded cache) in background
+    // Pre-fetch anything still missing (not embedded, not archived) in background
     preFetchFolderSongs(songs).catch(() => {});
   };
 

@@ -168,13 +168,15 @@ read-then-write on the folder's song list client-side, so two people
 submitting in the exact same instant could rarely clobber each other's
 addition — fine for a casual jam session, not built for high-concurrency use.
 
-### Optional: Song Archive (write-only)
+### Optional: Song Archive
 
-Silently upserts every song's title/artist/movie + both lyric scripts into
-Supabase as folders get built up, purely to seed a future self-hosted song
-database. The app never reads this table back — it's a one-way archive.
-Deduped by title+artist, and a trigger stops inserts once the table hits 100
-rows.
+Upserts every song's title/artist/movie + both lyric scripts into Supabase
+as folders get built up, seeding a future self-hosted song database. Deduped
+by title+artist+movie, and a trigger stops inserts once the table hits 100
+rows. Reading is scoped narrowly: only importing a shared/request-linked
+folder consults it (as a faster-than-live-fetch tier for any song the
+sharer hadn't already cached) — general search and normal folder use never
+read from it.
 
 ```sql
 create table public.song_archive (
@@ -192,7 +194,8 @@ create table public.song_archive (
 alter table public.song_archive enable row level security;
 create policy "anon_insert" on public.song_archive for insert to anon with check (true);
 create policy "anon_update" on public.song_archive for update to anon using (true) with check (true);
--- Deliberately no select policy for anon — the client can write, never read.
+create policy "anon_read"   on public.song_archive for select to anon using (true);
+-- Nothing sensitive in this table (just song text), so public read is fine.
 
 create or replace function public.song_archive_cap() returns trigger as $$
 begin
@@ -206,6 +209,17 @@ $$ language plpgsql security definer;
 create trigger song_archive_cap_trigger
   before insert on public.song_archive
   for each row execute function public.song_archive_cap();
+```
+
+**If you already created this table** with the earlier title+artist-only key,
+run this once to re-key existing rows to the new title+artist+movie format
+(matches the app's own duplicate-detection logic) so future upserts of an
+already-archived song update it in place instead of creating a duplicate:
+
+```sql
+update public.song_archive
+set dedupe_key = lower(trim(title)) || '|' || lower(trim(coalesce(artist,''))) || '|' || lower(trim(coalesce(movie,'')));
+create policy "anon_read" on public.song_archive for select to anon using (true);
 ```
 
 ### Making changes
