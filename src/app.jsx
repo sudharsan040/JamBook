@@ -1902,14 +1902,16 @@ function archiveCustomSongs(songs) {
 }
 
 // One batched lookup against song_archive for a set of songs — used only
-// when importing a shared/request-linked folder, as a faster-than-live-fetch
-// tier for any song the sharer hadn't already cached (and thus couldn't
-// embed lyrics for in the share payload). Writes hits straight into the
-// local lyrics cache; a song with a cache hit here never touches the live
-// Spotify/JioSaavn/iTunes/lrclib/tamil2lyrics chain at all.
+// when importing a shared/request-linked folder. Deliberately checks EVERY
+// live song, including ones that already got a lyrics snapshot embedded in
+// the share payload: that snapshot was frozen at the moment the share link
+// was first generated, so if the sharer has edited lyrics since, the
+// archive (kept current on every edit) is the fresher, authoritative
+// source and should win — a song with a hit here never touches the live
+// Spotify/JioSaavn/iTunes/lrclib/tamil2lyrics chain at all either way.
 async function fillLyricsFromArchive(songs) {
   if (!HAS_SUPABASE || !Array.isArray(songs) || !songs.length) return;
-  const targets = songs.filter(s => s && s.type === "live" && !s.customLyrics && !getCachedLyrics(s.id));
+  const targets = songs.filter(s => s && s.type === "live" && !s.customLyrics);
   if (!targets.length) return;
   const keyToSongs = {};
   for (const s of targets) {
