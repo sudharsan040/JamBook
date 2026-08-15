@@ -2863,68 +2863,47 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
       <div className="px-4 py-4 border-b border-[#1a1a2a]">
         <div className="flex items-center justify-between">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Session Queue</div>
-          <div className="flex items-center gap-1 flex-shrink-0 -mt-1">
-            {onRefreshQueue && (
-              <button onClick={doRefresh} disabled={refreshing} title="Refresh — pick up songs added via a Request Songs link"
-                className={`text-gray-600 hover:text-violet-400 text-sm w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
-                🔄
-              </button>
-            )}
-            <button onClick={onToggleCollapse} title="Collapse session queue"
-              className="text-gray-600 hover:text-gray-300 text-xl w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">›</button>
-          </div>
+          <button onClick={onToggleCollapse} title="Collapse session queue"
+            className="text-gray-600 hover:text-gray-300 text-xl w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all flex-shrink-0 -mt-1">›</button>
         </div>
         <div className="text-sm font-semibold text-violet-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
 
-        {/* Song Roulette — spin across selected songs, or the whole active queue if none picked */}
-        <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">🎡 Song Roulette</div>
+        {/* Spin / Shuffle / Broadcast / Refresh — one strip, icon-only so all
+            four fit regardless of which ones apply (e.g. no broadcast permission). */}
+        <div className="mt-3 pt-3 border-t border-[#1a1a2a] flex items-center gap-1.5">
           <button
             onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(folder.id); setShowSpin(true); }}
             disabled={pending.length===0}
             title={pending.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
-            className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-            🎲 Spin
+            className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+            🎲
           </button>
-        </div>
-
-        {/* Randomizes pending song order and pushes completed songs out of
-            the numbered range, so the remaining ones read 1..N with no gaps. */}
-        {onShuffleQueue && (
-          <div className="mt-2">
+          {onShuffleQueue && (
             <button onClick={()=>onShuffleQueue(folder.id)} disabled={pending.length<2}
               title={pending.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
-              className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-              🔀 Shuffle Numbers
+              className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              🔀
             </button>
-          </div>
-        )}
-
-        {/* Broadcast controls — only when the user owns the folder */}
-        {canBroadcast && (
-          <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
-            {!isBroadcasting ? (
-              <button onClick={onStartBroadcast}
-                title="Start broadcasting — your song picks sync to everyone with this folder"
-                className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-600/10 transition-all font-medium">
-                📡 Start Broadcast
-              </button>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-red-300 font-semibold flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
-                    Live
-                  </span>
-                  <span className="text-xs text-green-400 font-medium">👥 {viewerCount}</span>
-                </div>
-                <button onClick={onStopBroadcast}
-                  className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 hover:bg-red-600/30 transition-all font-medium">
-                  ⏹ Stop Broadcast
-                </button>
-              </div>
-            )}
+          )}
+          {canBroadcast && (
+            <button onClick={isBroadcasting ? onStopBroadcast : onStartBroadcast}
+              title={isBroadcasting ? "Stop broadcasting" : "Start broadcasting — your song picks sync to everyone with this folder"}
+              className={`flex-1 text-base py-1.5 rounded-lg border transition-all ${isBroadcasting ? "bg-red-600/20 border-red-500 text-red-300 animate-pulse" : "border-red-500/40 text-red-400 hover:bg-red-600/10"}`}>
+              📡
+            </button>
+          )}
+          {onRefreshQueue && (
+            <button onClick={doRefresh} disabled={refreshing} title="Refresh — pick up songs added via a Request Songs link"
+              className={`flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
+              🔄
+            </button>
+          )}
+        </div>
+        {canBroadcast && isBroadcasting && (
+          <div className="flex items-center justify-center gap-1.5 mt-1.5 text-xs text-red-300">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
+            Live · <span className="text-green-400 font-medium">👥 {viewerCount}</span>
           </div>
         )}
 
@@ -3412,40 +3391,49 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <button onClick={()=>setShowQueue(false)} className="text-gray-500 hover:text-white text-xl">✕</button>
             </div>
             <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">🎡 Song Roulette</div>
-              <button
-                onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(activeFolder.id); setShowSpin(true); }}
-                disabled={pendingQueueSongs.length===0}
-                title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
-                className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-                🎲 Spin
-              </button>
-            </div>
-            {(canBroadcast || broadcastModerator) && (
-              <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
-                {canBroadcast && !isBroadcasting && (
-                  <button onClick={()=>{onStartBroadcast(); setShowQueue(false);}}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-600/10 transition-all font-medium">
-                    📡 Start Broadcast
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(activeFolder.id); setShowSpin(true); }}
+                  disabled={pendingQueueSongs.length===0}
+                  title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
+                  className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                  🎲
+                </button>
+                {onShuffleQueue && (
+                  <button onClick={()=>onShuffleQueue(activeFolder.id)} disabled={pendingQueueSongs.length<2}
+                    title={pendingQueueSongs.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
+                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    🔀
                   </button>
                 )}
-                {canBroadcast && isBroadcasting && (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-green-400 font-medium">👥 {viewerCount} viewer{viewerCount===1?"":"s"}</span>
-                    <button onClick={onStopBroadcast}
-                      className="text-xs px-2.5 py-1.5 rounded-lg bg-red-600/20 border border-red-500 text-red-300 transition-all font-medium animate-pulse">
-                      ⏹ Stop
-                    </button>
-                  </div>
+                {canBroadcast && (
+                  <button onClick={isBroadcasting ? onStopBroadcast : ()=>{onStartBroadcast(); setShowQueue(false);}}
+                    title={isBroadcasting ? "Stop broadcasting" : "Start broadcasting"}
+                    className={`flex-1 text-base py-1.5 rounded-lg border transition-all ${isBroadcasting ? "bg-red-600/20 border-red-500 text-red-300 animate-pulse" : "border-red-500/40 text-red-400 hover:bg-red-600/10"}`}>
+                    📡
+                  </button>
                 )}
-                {!canBroadcast && broadcastModerator && (
-                  <div className="flex items-center gap-1.5 text-xs text-red-300">
-                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
-                    <span className="truncate">📡 {broadcastModerator.name} is live</span>
-                  </div>
+                {onRefreshQueue && (
+                  <button onClick={()=>onRefreshQueue(activeFolder.id)}
+                    title="Refresh — pick up songs added via a Request Songs link"
+                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all">
+                    🔄
+                  </button>
                 )}
               </div>
-            )}
+              {canBroadcast && isBroadcasting && (
+                <div className="flex items-center justify-center gap-1.5 mt-1.5 text-xs text-red-300">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
+                  Live · <span className="text-green-400 font-medium">👥 {viewerCount}</span>
+                </div>
+              )}
+              {!canBroadcast && broadcastModerator && (
+                <div className="flex items-center gap-1.5 text-xs text-red-300 mt-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
+                  <span className="truncate">📡 {broadcastModerator.name} is live</span>
+                </div>
+              )}
+            </div>
             <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
               <input type="text" value={queueSearch} onChange={(e)=>setQueueSearch(e.target.value)}
                 placeholder="🔍 Search by name or number"
