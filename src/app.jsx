@@ -3707,7 +3707,6 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
 
   const [numberInputs, setNumberInputs] = React.useState(["", "", "", "", ""]);
   const [showNames, setShowNames]     = React.useState(false); // hidden by default — keep the pick a surprise while spinning
-  const [phase, setPhase]             = React.useState("select"); // select | wheel
   const [rotation, setRotation]       = React.useState(0);
   const [spinning, setSpinning]       = React.useState(false);
   const [winner, setWinner]           = React.useState(null);
@@ -3785,88 +3784,78 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" style={{width: 360}} onClick={e => e.stopPropagation()}>
-        {phase === "select" && (
-          <>
-            <div className="text-lg font-bold text-white mb-1">🎡 Spin the Wheel</div>
-            <p className="text-xs text-gray-500 mb-3">Type up to 5 song numbers from the queue to narrow the spin — or leave them blank to spin the whole active queue. Numbers are 1–{maxNumber}.</p>
-            <div className="flex items-center gap-2 mb-3">
-              {numberInputs.map((val, idx) => (
-                <input key={idx} type="number" inputMode="numeric" value={val}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setNumberInputs(prev => prev.map((x, i) => i === idx ? v : x));
-                  }}
-                  placeholder="#"
-                  className="w-0 flex-1 min-w-0 text-center text-sm bg-[#1a1a2e] border border-[#2e2e44] rounded-lg py-2 text-gray-200 focus:border-violet-500 focus:outline-none"/>
-              ))}
-            </div>
-            <label className="flex items-center gap-2 text-xs text-gray-500 mb-3 cursor-pointer">
-              <input type="checkbox" checked={showNames} onChange={(e)=>setShowNames(e.target.checked)} className="accent-violet-600"/>
-              Show song names while spinning (still reveals the winner once it lands either way)
-            </label>
-            <div className="text-xs text-gray-500 mb-4">
-              {matchedSongs.length > 0
-                ? <>Spinning: <span className="text-gray-300">{matchedSongs.map(s => showNames ? s.title : `#${songToNumber[s.id]}`).join(", ")}</span></>
-                : <>No numbers entered — spinning all {songs.length} active songs.</>}
-              {invalidCount > 0 && (
-                <div className="text-amber-500 mt-1">{invalidCount} number{invalidCount > 1 ? "s" : ""} didn't match a song in the queue.</div>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-xs border border-[#2e2e44] text-gray-400 hover:border-gray-500 transition-all">Cancel</button>
-              <button onClick={() => setPhase("wheel")} disabled={!canSpin}
-                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-violet-700 transition-all">
-                Next →
-              </button>
-            </div>
-          </>
-        )}
-
-        {phase === "wheel" && (
-          <div className="flex flex-col items-center">
-            <div className="text-lg font-bold text-white mb-4">🎡 Spin the Wheel</div>
-            <div className="relative" style={{width: size, height: size}}>
-              <div className="absolute left-1/2 -top-1 -translate-x-1/2 z-10"
-                style={{width: 0, height: 0, borderLeft: "10px solid transparent", borderRight: "10px solid transparent", borderTop: "16px solid #f9a8d4"}}/>
-              <svg width={size} height={size}
-                style={{transform: `rotate(${rotation}deg)`, transition: "transform 2s cubic-bezier(.15,.65,.15,1)"}}
-                onTransitionEnd={handleTransitionEnd}>
-                {selectedSongs.map((s, i) => {
-                  const start = i * segAngle, end = (i + 1) * segAngle;
-                  const mid   = start + segAngle / 2;
-                  const labelPos = polarToCartesian(mid);
-                  const lx = cx + (labelPos.x - cx) * 0.6, ly = cy + (labelPos.y - cy) * 0.6;
-                  return (
-                    <g key={s.id}>
-                      <path d={wedgePath(start, end)} fill={AVATAR_COLORS[i % AVATAR_COLORS.length]} stroke="#0d0d18" strokeWidth="2"/>
-                      <text x={lx} y={ly} fill="white" fontSize={showNames ? "10" : "14"} fontWeight="700" textAnchor="middle" dominantBaseline="middle">
-                        {showNames ? (s.title || "").slice(0, 12) : `#${songToNumber[s.id]}`}
-                      </text>
-                    </g>
-                  );
-                })}
-                <circle cx={cx} cy={cy} r="10" fill="#0d0d18" stroke="#7c3aed" strokeWidth="2"/>
-              </svg>
-            </div>
-
-            {!winner && (
-              <button onClick={startSpin} disabled={spinning}
-                className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 transition-all">
-                {spinning ? "Spinning…" : "🎲 Spin!"}
-              </button>
-            )}
-            {winner && (
-              <div className="mt-5 text-center">
-                <div className="text-sm text-gray-400">🎉 Landed on</div>
-                <div className="text-lg font-bold text-violet-300">{winner.title}</div>
-                <div className="text-xs text-gray-500 mt-1">Opening lyrics…</div>
-              </div>
-            )}
-            {!spinning && !winner && (
-              <button onClick={() => setPhase("select")} className="mt-3 text-xs text-gray-500 hover:text-gray-300 transition-all">← back to selection</button>
-            )}
+        <div className="flex flex-col items-center">
+          <div className="w-full flex items-center justify-between mb-3">
+            <div className="text-lg font-bold text-white">🎡 Spin the Wheel</div>
+            <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
           </div>
-        )}
+
+          <div className="relative" style={{width: size, height: size}}>
+            <div className="absolute left-1/2 -top-1 -translate-x-1/2 z-10"
+              style={{width: 0, height: 0, borderLeft: "10px solid transparent", borderRight: "10px solid transparent", borderTop: "16px solid #f9a8d4"}}/>
+            <svg width={size} height={size}
+              style={{transform: `rotate(${rotation}deg)`, transition: "transform 2s cubic-bezier(.15,.65,.15,1)"}}
+              onTransitionEnd={handleTransitionEnd}>
+              {selectedSongs.map((s, i) => {
+                const start = i * segAngle, end = (i + 1) * segAngle;
+                const mid   = start + segAngle / 2;
+                const labelPos = polarToCartesian(mid);
+                const lx = cx + (labelPos.x - cx) * 0.6, ly = cy + (labelPos.y - cy) * 0.6;
+                return (
+                  <g key={s.id}>
+                    <path d={wedgePath(start, end)} fill={AVATAR_COLORS[i % AVATAR_COLORS.length]} stroke="#0d0d18" strokeWidth="2"/>
+                    <text x={lx} y={ly} fill="white" fontSize={showNames ? "10" : "14"} fontWeight="700" textAnchor="middle" dominantBaseline="middle">
+                      {showNames ? (s.title || "").slice(0, 12) : `#${songToNumber[s.id]}`}
+                    </text>
+                  </g>
+                );
+              })}
+              <circle cx={cx} cy={cy} r="10" fill="#0d0d18" stroke="#7c3aed" strokeWidth="2"/>
+            </svg>
+          </div>
+
+          {winner ? (
+            <div className="mt-5 text-center">
+              <div className="text-sm text-gray-400">🎉 Landed on</div>
+              <div className="text-lg font-bold text-violet-300">{winner.title}</div>
+              <div className="text-xs text-gray-500 mt-1">Opening lyrics…</div>
+            </div>
+          ) : (
+            <button onClick={startSpin} disabled={!canSpin || spinning}
+              className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 transition-all">
+              {spinning ? "Spinning…" : "🎲 Spin!"}
+            </button>
+          )}
+
+          {!spinning && !winner && (
+            <div className="w-full mt-5 pt-4 border-t border-[#1e1e2e]">
+              <p className="text-xs text-gray-500 mb-2">Optionally narrow it to up to 5 song numbers — otherwise it spins the whole active queue. Numbers are 1–{maxNumber}.</p>
+              <div className="flex items-center gap-2 mb-2">
+                {numberInputs.map((val, idx) => (
+                  <input key={idx} type="number" inputMode="numeric" value={val}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setNumberInputs(prev => prev.map((x, i) => i === idx ? v : x));
+                    }}
+                    placeholder="#"
+                    className="w-0 flex-1 min-w-0 text-center text-sm bg-[#1a1a2e] border border-[#2e2e44] rounded-lg py-2 text-gray-200 focus:border-violet-500 focus:outline-none"/>
+                ))}
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gray-500 mb-2 cursor-pointer">
+                <input type="checkbox" checked={showNames} onChange={(e)=>setShowNames(e.target.checked)} className="accent-violet-600"/>
+                Show song names while spinning
+              </label>
+              <div className="text-xs text-gray-500">
+                {matchedSongs.length > 0
+                  ? <>Spinning: <span className="text-gray-300">{matchedSongs.map(s => showNames ? s.title : `#${songToNumber[s.id]}`).join(", ")}</span></>
+                  : <>Spinning all {songs.length} active songs.</>}
+                {invalidCount > 0 && (
+                  <div className="text-amber-500 mt-1">{invalidCount} number{invalidCount > 1 ? "s" : ""} didn't match a song in the queue.</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
