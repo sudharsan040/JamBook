@@ -1650,9 +1650,20 @@ async function publishShareToServer(folder, user, songs) {
   if (!HAS_SUPABASE || !folder.id) return null;
   const token = folder.shareCode || newShareToken();
 
+  // Re-read the folder's current songs rather than trusting the `songs`
+  // passed in — this write replaces the whole `songs` column, and the
+  // caller's copy can be stale relative to a song someone added via a
+  // "Request Songs" link moments ago. Falls back to the passed-in list only
+  // if the read fails, so sharing still works rather than hard-erroring.
+  const { data: current } = await sb.from("folders")
+    .select("songs").eq("id", folder.id).eq("user_id", user.id).maybeSingle();
+  const baseSongs = current?.songs
+    ? current.songs.map(s => { const c = { ...s }; delete c._shareLyrics; return c; })
+    : songs;
+
   // Enrich each song with its cached lyrics — stored inline on the song
   // so the recipient gets them in a single query.
-  const enrichedSongs = songs.map(s => {
+  const enrichedSongs = baseSongs.map(s => {
     if (s.type !== "live") return s;
     const cached = getCachedLyrics(s.id);
     if (!cached?.lyrics) return s;
@@ -2129,6 +2140,33 @@ const db = {
     }
     const all = getUserFolders(user.id);
     saveUserFolders(user.id, all.map(x => x.id === folder.id ? folder : x));
+  },
+
+  // Applies `mutate` to a folder's *current* song list — fetched fresh from
+  // the DB right before writing, not trusted from this device's possibly
+  // stale local state — then persists and returns the resulting folder.
+  //
+  // Why this exists: db.updateFolder always overwrites the whole `songs`
+  // column with whatever it's given. A song can land in that column from a
+  // writer this device doesn't know about yet — an audience member adding
+  // one via a "Request Songs" link hits Supabase directly, bypassing this
+  // device's state entirely. If this device then saves ANY change (even an
+  // unrelated rename), a blind write from its stale local `songs` silently
+  // deletes whatever that other writer added. Re-reading immediately before
+  // every write closes that gap; it doesn't fully eliminate races between
+  // two simultaneous writers, but that's an acceptable, much narrower risk
+  // for a casual jam-session tool (same trade-off already documented for
+  // the request-link feature itself).
+  async mutateFolderSongs(user, folder, mutate) {
+    let base = folder.songs;
+    if (HAS_SUPABASE && !user?.isGuest) {
+      const { data } = await sb.from("folders")
+        .select("songs").eq("id", folder.id).eq("user_id", user.id).maybeSingle();
+      if (data?.songs) base = data.songs.map(s => { const c = { ...s }; delete c._shareLyrics; return c; });
+    }
+    const updated = { ...folder, songs: mutate(base) };
+    await this.updateFolder(user, updated);
+    return updated;
   },
 
   async deleteFolder(user, folderId) {
@@ -4779,77 +4817,73 @@ function App() {
   const renameFolder = async (id, name) => {
     const trimmed = (name || "").trim();
     if (!trimmed) return;
-    let updated;
-    setFolders(f => f.map(x => {
-      if (x.id !== id) return x;
-      updated = { ...x, name: trimmed };
-      return updated;
-    }));
-    if (updated) await db.updateFolder(user, updated);
+    setFolders(f => f.map(x => x.id === id ? { ...x, name: trimmed } : x));
+    const folder = folders.find(x => x.id === id);
+    if (!folder) return;
+    // Rename doesn't intend to touch songs at all, but every write here
+    // still replaces the whole row — go through the fresh-songs path (an
+    // identity mutate) so it can't accidentally clobber a concurrent add.
+    const updated = await db.mutateFolderSongs(user, { ...folder, name: trimmed }, songs => songs);
+    setFolders(f => f.map(x => x.id === id ? updated : x));
   };
 
   // Randomizes the order of pending songs and moves completed ones to the
   // end, so the numbers that remain always read 1..N with no gaps left by
   // completed songs — e.g. 10 songs, #8 completed, shuffle → 9 songs, 1-9.
   const shuffleQueueNumbers = async (fid) => {
-    let updated;
-    setFolders(f => f.map(x => {
-      if (x.id !== fid) return x;
-      const pending   = x.songs.filter(s => !s.completed);
-      const completed = x.songs.filter(s => s.completed);
-      // Fisher-Yates shuffle of the pending order
+    const folder = folders.find(f => f.id === fid);
+    if (!folder) return;
+    const doShuffle = songs => {
+      const pending   = songs.filter(s => !s.completed);
+      const completed = songs.filter(s => s.completed);
       for (let i = pending.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [pending[i], pending[j]] = [pending[j], pending[i]];
       }
-      updated = { ...x, songs: [...pending, ...completed] };
-      return updated;
-    }));
-    if (updated) await db.updateFolder(user, updated);
+      return [...pending, ...completed];
+    };
+    // Optimistic local shuffle for instant feedback...
+    setFolders(f => f.map(x => x.id === fid ? { ...x, songs: doShuffle(x.songs) } : x));
+    // ...then persist against the freshest server state and reconcile —
+    // covers any song added by someone else in the meantime too.
+    const updated = await db.mutateFolderSongs(user, folder, doShuffle);
+    setFolders(f => f.map(x => x.id === fid ? updated : x));
   };
 
   const addToFolder = async (fid, song) => {
     cacheSong(song);
-    let updated;
-    setFolders(f => {
-      const next = f.map(x => {
-        if (x.id !== fid) return x;
-        if (x.songs.some(s => s.id === song.id)) return x;
-        const newF = { ...x, songs: [...x.songs, song] };
-        updated = newF;
-        return newF;
-      });
-      return next;
-    });
+    const folder = folders.find(f => f.id === fid);
+    if (!folder) return;
+    if (!folder.songs.some(s => s.id === song.id)) {
+      setFolders(f => f.map(x => x.id === fid ? { ...x, songs: [...x.songs, song] } : x));
+    }
     preFetchLyrics(song);
     showToast(`Added "${song.title}" to folder`);
-    if (updated) await db.updateFolder(user, updated);
+    const updated = await db.mutateFolderSongs(user, folder, songs =>
+      songs.some(s => s.id === song.id) ? songs : [...songs, song]
+    );
+    setFolders(f => f.map(x => x.id === fid ? updated : x));
   };
 
   const removeFromFolder = async (fid, sid) => {
-    let updated;
-    setFolders(f => f.map(x => {
-      if (x.id !== fid) return x;
-      const newF = { ...x, songs: x.songs.filter(s => s.id !== sid) };
-      updated = newF;
-      return newF;
-    }));
-    if (updated) await db.updateFolder(user, updated);
+    const folder = folders.find(f => f.id === fid);
+    if (!folder) return;
+    setFolders(f => f.map(x => x.id === fid ? { ...x, songs: x.songs.filter(s => s.id !== sid) } : x));
+    const updated = await db.mutateFolderSongs(user, folder, songs => songs.filter(s => s.id !== sid));
+    setFolders(f => f.map(x => x.id === fid ? updated : x));
   };
 
   const toggleSongCompleted = async (fid, sid) => {
-    let updated;
-    setFolders(f => f.map(x => {
-      if (x.id !== fid) return x;
-      const newF = { ...x, songs: x.songs.map(s => s.id === sid ? { ...s, completed: !s.completed } : s) };
-      updated = newF;
-      return newF;
-    }));
+    const folder = folders.find(f => f.id === fid);
+    if (!folder) return;
+    const flip = songs => songs.map(s => s.id === sid ? { ...s, completed: !s.completed } : s);
+    setFolders(f => f.map(x => x.id === fid ? { ...x, songs: flip(x.songs) } : x));
     // Keep the currently-open song's own completed flag in sync too — it's a
     // separate piece of state from `folders`, so a toggle button on the song
     // view itself would otherwise show stale state until you navigate away.
     setActiveSong(prev => prev && prev.id === sid ? { ...prev, completed: !prev.completed } : prev);
-    if (updated) await db.updateFolder(user, updated);
+    const updated = await db.mutateFolderSongs(user, folder, flip);
+    setFolders(f => f.map(x => x.id === fid ? updated : x));
   };
 
   // Persist a folder's audience-request token once (created lazily by
@@ -4857,9 +4891,11 @@ function App() {
   const persistRequestToken = async (fid, token) => {
     const target = folders.find(f => f.id === fid);
     if (!target) return;
-    const updated = { ...target, requestToken: token };
-    setFolders(f => f.map(x => x.id === fid ? updated : x));
-    try { await db.updateFolder(user, updated); } catch {}
+    setFolders(f => f.map(x => x.id === fid ? { ...x, requestToken: token } : x));
+    try {
+      const updated = await db.mutateFolderSongs(user, { ...target, requestToken: token }, songs => songs);
+      setFolders(f => f.map(x => x.id === fid ? updated : x));
+    } catch {}
   };
 
   const selectFolder = id => { setActiveFolderId(id); setView("folder"); };
@@ -4911,36 +4947,35 @@ function App() {
     };
 
     const existingIndex = song ? folder.songs.findIndex(s => s.id === song.id) : -1;
-    let updated;
-
-    if (mode === "edit" && existingIndex >= 0) {
-      // True edit of a song already in this folder — overwrite fields
-      updated = {
-        ...folder,
-        songs: folder.songs.map(s => s.id === song.id ? { ...s, ...patch } : s),
-      };
-      if (activeSong && activeSong.id === song.id) {
-        setActiveSong({ ...activeSong, ...patch });
+    const newCustomId = "cs_" + (window.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(36).slice(2,8)));
+    // Decided against whatever song list it's applied to (fresh from the DB
+    // at persist time, not necessarily this device's local `folder.songs`)
+    // so a concurrent add from someone else can't get clobbered by this save.
+    const mutate = songs => {
+      const idx = song ? songs.findIndex(s => s.id === song.id) : -1;
+      if (mode === "edit" && idx >= 0) {
+        return songs.map(s => s.id === song.id ? { ...s, ...patch } : s);
       }
+      const baseSong = song && mode === "edit"
+        ? { ...song, ...patch }   // editing a song from search — keep its iTunes id/cover
+        : { id: newCustomId, type: "custom", ...patch };
+      return [...songs, baseSong];
+    };
+
+    // Optimistic local update for instant feedback, using this device's own
+    // view of the folder (existingIndex) just to decide the toast wording.
+    let updated = { ...folder, songs: mutate(folder.songs) };
+    setFolders(f => f.map(x => x.id === folderId ? updated : x));
+    if (mode === "edit" && existingIndex >= 0) {
+      if (activeSong && activeSong.id === song.id) setActiveSong({ ...activeSong, ...patch });
       showToast(`Lyrics saved`);
     } else {
-      // "new" mode OR "edit" of a song that isn't in this folder yet → add it
-      const baseSong = song && mode === "edit"
-        ? { ...song, ...patch }   // editing a song from search → keep its iTunes id/cover
-        : {
-            id:   "cs_" + (window.crypto?.randomUUID?.() || (Date.now()+"-"+Math.random().toString(36).slice(2,8))),
-            type: "custom",
-            ...patch,
-          };
-      updated = { ...folder, songs: [...folder.songs, baseSong] };
-      if (activeSong && song && activeSong.id === song.id) {
-        setActiveSong({ ...activeSong, ...patch });
-      }
+      if (activeSong && song && activeSong.id === song.id) setActiveSong({ ...activeSong, ...patch });
       showToast(`Saved "${data.title}" to ${folder.name}`);
     }
 
+    updated = await db.mutateFolderSongs(user, folder, mutate);
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
-    await db.updateFolder(user, updated);
 
     archiveSong(
       { title: data.title, artist: data.artist, album: data.album },
@@ -5110,9 +5145,11 @@ function App() {
     if (!activeFolder || !canBroadcast) return;
     let folder = activeFolder;
     if (!folder.broadcastRoom) {
-      const updated = { ...folder, broadcastRoom: newBroadcastRoom() };
+      const room = newBroadcastRoom();
+      setFolders(fs => fs.map(x => x.id === folder.id ? { ...x, broadcastRoom: room } : x));
+      let updated = { ...folder, broadcastRoom: room };
+      try { updated = await db.mutateFolderSongs(user, updated, songs => songs); } catch {}
       setFolders(fs => fs.map(x => x.id === folder.id ? updated : x));
-      try { await db.updateFolder(user, updated); } catch {}
       folder = updated;
       // Trigger re-subscribe by waiting one tick (effect will pick up new room)
       await new Promise(r => setTimeout(r, 50));
@@ -5164,9 +5201,11 @@ function App() {
     if (!activeFolder || !canBroadcast) return;
     if (isBroadcasting) { setPendingBroadcastId(null); return; }
     if (!activeFolder.broadcastRoom) {
-      const updated = { ...activeFolder, broadcastRoom: newBroadcastRoom() };
-      setFolders(fs => fs.map(x => x.id === activeFolder.id ? updated : x));
-      db.updateFolder(user, updated).catch(()=>{});
+      const room = newBroadcastRoom();
+      setFolders(fs => fs.map(x => x.id === activeFolder.id ? { ...x, broadcastRoom: room } : x));
+      db.mutateFolderSongs(user, { ...activeFolder, broadcastRoom: room }, songs => songs)
+        .then(updated => setFolders(fs => fs.map(x => x.id === activeFolder.id ? updated : x)))
+        .catch(()=>{});
       return; // wait for re-subscribe with new room
     }
     if (subscribedRoom !== activeFolder.broadcastRoom) return; // channel not ready yet
@@ -5288,9 +5327,11 @@ function App() {
             // Save the newly-generated broadcastRoom back to the folder
             const target = folders.find(f => f.id === folderId);
             if (!target) return;
-            const updated = { ...target, broadcastRoom: room };
-            setFolders(f => f.map(x => x.id === folderId ? updated : x));
-            try { await db.updateFolder(user, updated); } catch {}
+            setFolders(f => f.map(x => x.id === folderId ? { ...x, broadcastRoom: room } : x));
+            try {
+              const updated = await db.mutateFolderSongs(user, { ...target, broadcastRoom: room }, songs => songs);
+              setFolders(f => f.map(x => x.id === folderId ? updated : x));
+            } catch {}
           }}
           onShareCodePersisted={(folderId, code) => {
             setShareTarget(prev => prev?.id === folderId ? { ...prev, shareCode: code } : prev);
