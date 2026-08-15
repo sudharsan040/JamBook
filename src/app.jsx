@@ -2880,7 +2880,9 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
         {/* Song Roulette — spin across selected songs, or the whole active queue if none picked */}
         <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">🎡 Song Roulette</div>
-          <button onClick={()=>setShowSpin(true)} disabled={pending.length===0}
+          <button
+            onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(folder.id); setShowSpin(true); }}
+            disabled={pending.length===0}
             title={pending.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
             className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
             🎲 Spin
@@ -3411,7 +3413,9 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             </div>
             <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">🎡 Song Roulette</div>
-              <button onClick={()=>setShowSpin(true)} disabled={pendingQueueSongs.length===0}
+              <button
+                onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(activeFolder.id); setShowSpin(true); }}
+                disabled={pendingQueueSongs.length===0}
                 title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
                 className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed">
                 🎲 Spin
@@ -3686,7 +3690,22 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
 
 // ─── Spin Wheel Modal ─────────────────────────────────────────────────
 // Pick 3–5 songs, spin a wheel, let it land on one and open its lyrics.
-function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
+function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onClose }) {
+  // Defensive dedupe by id — the same real song can otherwise take up
+  // multiple wheel segments (e.g. requested more than once under a
+  // different source id), which makes the wheel land on "the same song"
+  // far more often than it looks like it should.
+  const { songs, numbers } = React.useMemo(() => {
+    const seen = new Set(), s = [], n = [];
+    rawSongs.forEach((song, i) => {
+      if (seen.has(song.id)) return;
+      seen.add(song.id);
+      s.push(song);
+      n.push(rawNumbers ? rawNumbers[i] : i + 1);
+    });
+    return { songs: s, numbers: n };
+  }, [rawSongs, rawNumbers]);
+
   const [numberInputs, setNumberInputs] = React.useState(["", "", "", "", ""]);
   const [showNames, setShowNames]     = React.useState(false); // hidden by default — keep the pick a surprise while spinning
   const [phase, setPhase]             = React.useState("select"); // select | wheel
@@ -3741,7 +3760,7 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
     if (delta < 0) delta += 360;
     pendingWinnerRef.current = selectedSongs[winnerIndex];
     setSpinning(true);
-    setRotation(r => r + 5 * 360 + delta); // several full spins + land on winner
+    setRotation(r => r + 4 * 360 + delta); // a few full spins + land on winner
   };
 
   const handleTransitionEnd = (e) => {
@@ -3749,7 +3768,7 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
     setSpinning(false);
     const w = pendingWinnerRef.current;
     setWinner(w);
-    if (w) setTimeout(() => onOpenSong(w), 1100);
+    if (w) setTimeout(() => onOpenSong(w), 500);
   };
 
   const size = 260, cx = size / 2, cy = size / 2, r = size / 2 - 6;
@@ -3811,7 +3830,7 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
               <div className="absolute left-1/2 -top-1 -translate-x-1/2 z-10"
                 style={{width: 0, height: 0, borderLeft: "10px solid transparent", borderRight: "10px solid transparent", borderTop: "16px solid #f9a8d4"}}/>
               <svg width={size} height={size}
-                style={{transform: `rotate(${rotation}deg)`, transition: "transform 4.5s cubic-bezier(.15,.65,.15,1)"}}
+                style={{transform: `rotate(${rotation}deg)`, transition: "transform 2s cubic-bezier(.15,.65,.15,1)"}}
                 onTransitionEnd={handleTransitionEnd}>
                 {selectedSongs.map((s, i) => {
                   const start = i * segAngle, end = (i + 1) * segAngle;
