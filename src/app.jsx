@@ -2884,7 +2884,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
             four fit regardless of which ones apply (e.g. no broadcast permission). */}
         <div className="mt-3 pt-3 border-t border-[#1a1a2a] flex items-center gap-1.5">
           <button
-            onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(folder.id); setShowSpin(true); }}
+            onClick={()=>{ setShowSpin(true); if (onRefreshQueue) onRefreshQueue(folder.id); }}
             disabled={pending.length===0}
             title={pending.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
             className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
@@ -3404,7 +3404,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
               <div className="flex items-center gap-1.5">
                 <button
-                  onClick={async ()=>{ if (onRefreshQueue) await onRefreshQueue(activeFolder.id); setShowSpin(true); }}
+                  onClick={()=>{ setShowSpin(true); if (onRefreshQueue) onRefreshQueue(activeFolder.id); }}
                   disabled={pendingQueueSongs.length===0}
                   title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
                   className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
