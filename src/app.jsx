@@ -4605,21 +4605,42 @@ function RequestSongPage({ token }) {
   // Toggle: tap the heart to upvote, tap again to retract. Upvoted songs get
   // re-sorted to the top of the real session queue server-side, not just
   // reordered in this view.
+  const applyVoteLocally = (songId, delta) => {
+    setFolder(prev => prev && {
+      ...prev,
+      songs: prev.songs.map(s => s.id === songId ? { ...s, votes: Math.max(0, (s.votes || 0) + delta) } : s),
+    });
+  };
+  const setVotedLocally = (songId, voted) => {
+    setVotedIds(prev => {
+      const next = new Set(prev);
+      voted ? next.add(songId) : next.delete(songId);
+      LS.set(votedKey, [...next]);
+      return next;
+    });
+  };
+
   const handleVote = async (song) => {
+    if (votingId === song.id) return; // already mid-flight for this song
     const alreadyVoted = votedIds.has(song.id);
     const direction = alreadyVoted ? -1 : 1;
+
+    // Optimistic: heart and count flip the instant you tap, before the
+    // network round trip even starts — that round trip is what was making
+    // votes feel unresponsive enough to invite repeat taps. Reconciled with
+    // the real server state (and true queue order) once the write lands;
+    // rolled back if it fails.
+    setVotedLocally(song.id, !alreadyVoted);
+    applyVoteLocally(song.id, direction);
     setVotingId(song.id);
+
     const res = await voteForSong(token, song.id, direction);
     setVotingId(null);
     if (res.ok) {
-      setVotedIds(prev => {
-        const next = new Set(prev);
-        alreadyVoted ? next.delete(song.id) : next.add(song.id);
-        LS.set(votedKey, [...next]);
-        return next;
-      });
       refreshFolder();
     } else {
+      setVotedLocally(song.id, alreadyVoted);
+      applyVoteLocally(song.id, -direction);
       showToast(res.error || "Couldn't vote — try again");
     }
   };
