@@ -538,6 +538,17 @@ function useCatalogSearch({ query, mode, language }) {
   };
 }
 
+// JioSaavn's API returns title/artist/album HTML-entity-encoded (e.g. a
+// literal `&quot;` instead of `"`, `&amp;` instead of `&`) — decode via a
+// detached <textarea>, the standard safe trick (its content is never parsed
+// as live HTML or executed, just read back out as plain text).
+function decodeHtmlEntities(str) {
+  if (!str || str.indexOf("&") === -1) return str; // fast path — nothing to decode
+  const el = document.createElement("textarea");
+  el.innerHTML = str;
+  return el.value;
+}
+
 function mapJioSaavnSong(s) {
   const artists = (s.artists?.primary || s.artists?.all || []).map(a => a.name).filter(Boolean).join(", ");
   const images  = s.image || [];
@@ -546,9 +557,9 @@ function mapJioSaavnSong(s) {
     type:       "live",
     itunesId:   null,
     jiosaavnId: s.id,
-    title:      s.name,
-    artist:     artists || "Unknown",
-    album:      s.album?.name || "",
+    title:      decodeHtmlEntities(s.name),
+    artist:     decodeHtmlEntities(artists) || "Unknown",
+    album:      decodeHtmlEntities(s.album?.name) || "",
     cover:      images[images.length - 1]?.url || images[0]?.url || "",
     preview:    null, // JioSaavn's downloadUrl entries are full tracks, not short previews — skip rather than risk copyrighted playback
     language:   capitalizeLang(s.language) || "Unknown",
