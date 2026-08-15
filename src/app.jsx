@@ -2102,6 +2102,17 @@ const db = {
     });
   },
 
+  // Pure read, no write — used by the manual "Refresh" button so someone
+  // can pick up songs added via a Request Songs link (or from another
+  // device) without reloading the whole app and losing their place.
+  async getFolderSongs(user, folderId) {
+    if (!HAS_SUPABASE || user?.isGuest) return null;
+    const { data } = await sb.from("folders")
+      .select("songs").eq("id", folderId).eq("user_id", user.id).maybeSingle();
+    if (!data?.songs) return null;
+    return data.songs.map(s => { const c = { ...s }; delete c._shareLyrics; return c; });
+  },
+
   async createFolder(user, name) {
     if (user?.isGuest) {
       // Guests get an in-memory folder; nothing persisted.
@@ -2792,10 +2803,15 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
 
 function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
-  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue}) {
+  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
   const [queueSearch, setQueueSearch] = React.useState("");
+  const doRefresh = async () => {
+    setRefreshing(true);
+    try { await onRefreshQueue(folder.id); } finally { setRefreshing(false); }
+  };
   // Search only ever narrows what's rendered — Spin still draws from the
   // full (unfiltered) pending list so a search doesn't shrink its pool.
   const visiblePending   = pending.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
@@ -2815,8 +2831,16 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
       <div className="px-4 py-4 border-b border-[#1a1a2a]">
         <div className="flex items-center justify-between">
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-0.5">Session Queue</div>
-          <button onClick={onToggleCollapse} title="Collapse session queue"
-            className="text-gray-600 hover:text-gray-300 text-xl w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all flex-shrink-0 -mt-1">›</button>
+          <div className="flex items-center gap-1 flex-shrink-0 -mt-1">
+            {onRefreshQueue && (
+              <button onClick={doRefresh} disabled={refreshing} title="Refresh — pick up songs added via a Request Songs link"
+                className={`text-gray-600 hover:text-violet-400 text-sm w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
+                🔄
+              </button>
+            )}
+            <button onClick={onToggleCollapse} title="Collapse session queue"
+              className="text-gray-600 hover:text-gray-300 text-xl w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">›</button>
+          </div>
         </div>
         <div className="text-sm font-semibold text-violet-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
@@ -2914,7 +2938,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
 }
 
 // ─── Curated Song View ────────────────────────────────────────────────
-function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse,onShuffleQueue}) {
+function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse,onShuffleQueue,onRefreshQueue}) {
   const [showChords,setShowChords]   = React.useState(true);
   const [script,setScript]           = React.useState("roman");
   const [showFolderMenu,setFolderMenu] = React.useState(false);
@@ -2995,7 +3019,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         </div>
       </div>
       {activeFolder&&folderSongs&&folderSongs.length>0&&(
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse} onShuffleQueue={onShuffleQueue}/>
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse} onShuffleQueue={onShuffleQueue} onRefreshQueue={onRefreshQueue}/>
       )}
     </div>
   );
@@ -3020,7 +3044,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
-  queueCollapsed, onToggleQueueCollapse, onShuffleQueue}) {
+  queueCollapsed, onToggleQueueCollapse, onShuffleQueue, onRefreshQueue}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -3337,6 +3361,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           collapsed={queueCollapsed}
           onToggleCollapse={onToggleQueueCollapse}
           onShuffleQueue={onShuffleQueue}
+          onRefreshQueue={onRefreshQueue}
         />
       )}
 
@@ -3797,8 +3822,13 @@ function SpinWheelModal({ songs, numbers, onOpenSong, onClose }) {
 function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
   broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount,
-  showToast, onPersistRequestToken}) {
+  showToast, onPersistRequestToken, onRefresh}) {
   const [showRequestLink, setShowRequestLink] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const doRefresh = async () => {
+    setRefreshing(true);
+    try { await onRefresh(); } finally { setRefreshing(false); }
+  };
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
@@ -3843,6 +3873,14 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             <button onClick={onLeaveBroadcast}
               className="text-xs px-3 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-gray-500 transition-all flex-shrink-0">
               Leave
+            </button>
+          )}
+
+          {onRefresh && (
+            <button onClick={doRefresh} disabled={refreshing}
+              title="Refresh — pick up songs added via a Request Songs link"
+              className={`text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all flex-shrink-0 disabled:opacity-50 ${refreshing?"animate-spin":""}`}>
+              🔄
             </button>
           )}
 
@@ -4827,6 +4865,22 @@ function App() {
     setFolders(f => f.map(x => x.id === id ? updated : x));
   };
 
+  // Pulls this one folder's current songs from the DB and merges them into
+  // local state in place — lets someone pick up a song added via a Request
+  // Songs link (or from another device) without reloading the whole app
+  // and losing their scroll position / getting bounced back to the home screen.
+  const refreshFolder = async (fid) => {
+    const songs = await db.getFolderSongs(user, fid);
+    if (!songs) { showToast("Couldn't refresh — try again"); return; }
+    setFolders(f => f.map(x => x.id === fid ? { ...x, songs } : x));
+    setActiveSong(prev => {
+      if (!prev) return prev;
+      const fresh = songs.find(s => s.id === prev.id);
+      return fresh ? { ...prev, ...fresh } : prev;
+    });
+    showToast("Queue refreshed");
+  };
+
   // Randomizes the order of pending songs and moves completed ones to the
   // end, so the numbers that remain always read 1..N with no gaps left by
   // completed songs — e.g. 10 songs, #8 completed, shuffle → 9 songs, 1-9.
@@ -5255,6 +5309,7 @@ function App() {
             lyricsScale={lyricsScale} onLyricsScaleChange={setLyricsScale}
             queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
             onShuffleQueue={shuffleQueueNumbers}
+            onRefreshQueue={refreshFolder}
           />
         )}
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
@@ -5278,6 +5333,7 @@ function App() {
             lyricsScale={lyricsScale} onLyricsScaleChange={setLyricsScale}
             queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
             onShuffleQueue={shuffleQueueNumbers}
+            onRefreshQueue={refreshFolder}
           />
         )}
         {view==="folder"&&activeFolder&&(
@@ -5285,6 +5341,7 @@ function App() {
             folder={activeFolder} songs={folderSongs}
             onOpenSong={s=>openSong(s,activeFolder.id)}
             onRemove={removeFromFolder}
+            onRefresh={()=>refreshFolder(activeFolder.id)}
             onBack={()=>{
               if (user?.isGuest) { logout(); return; }
               setView("search"); setActiveFolderId(null);
