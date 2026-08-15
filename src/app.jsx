@@ -3769,7 +3769,7 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
     if (w) setTimeout(() => onOpenSong(w), 500);
   };
 
-  const size = 260, cx = size / 2, cy = size / 2, r = size / 2 - 6;
+  const size = 190, cx = size / 2, cy = size / 2, r = size / 2 - 6;
   const polarToCartesian = (angleDeg) => {
     const rad = (angleDeg - 90) * Math.PI / 180;
     return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
