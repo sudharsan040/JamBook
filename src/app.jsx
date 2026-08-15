@@ -4643,7 +4643,7 @@ function RequestSongPage({ token }) {
       <div className="flex-1 overflow-y-auto md:overflow-hidden md:min-h-0 px-4 sm:px-6 py-4">
         <div className="max-w-5xl mx-auto w-full md:h-full flex flex-col md:flex-row gap-6">
           {/* ── Left: request a song ─────────────────────────────────── */}
-          <div className="md:flex-1 md:min-h-0 flex flex-col">
+          <div className="md:flex-1 md:min-h-0 md:min-w-0 flex flex-col">
             <div className="flex flex-wrap gap-1.5 mb-2 justify-center">
               {REQUEST_FILTERS.map(f => (
                 <button key={f.value} onClick={()=>setFilterBy(f.value)}
@@ -4735,7 +4735,7 @@ function RequestSongPage({ token }) {
           </div>
 
           {/* ── Right: in queue ──────────────────────────────────────── */}
-          <div className="md:flex-1 md:min-h-0 flex flex-col md:border-l md:border-[#1e1e2e] md:pl-6">
+          <div className="md:flex-1 md:min-h-0 md:min-w-0 flex flex-col md:border-l md:border-[#1e1e2e] md:pl-6">
             <h2 className="text-sm font-semibold text-gray-300 mb-2 text-center md:text-left flex-shrink-0">
               📋 In Queue {folder.songs?.length ? `(${folder.songs.length})` : ""}
             </h2>
