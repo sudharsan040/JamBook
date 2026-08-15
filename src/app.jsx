@@ -1739,6 +1739,34 @@ async function addSongViaRequestToken(token, song) {
   return { ok: true };
 }
 
+// Casts (or retracts, direction=-1) an upvote for a song already in the
+// queue, then re-sorts pending songs by vote count — highest first, ties
+// keeping their existing relative order (stable sort) — so upvoted songs
+// actually move to the top of the real session queue, not just a display
+// list. Completed songs stay put at the end either way. Same read-then-write
+// trade-off as addSongViaRequestToken above: fine for a casual jam session,
+// not built to survive many people voting in the exact same instant.
+async function voteForSong(token, songId, direction) {
+  if (!HAS_SUPABASE || !token) return { ok: false, error: "Not configured" };
+  const { data, error: readErr } = await sb.from("folders")
+    .select("songs").eq("request_token", token).limit(1).maybeSingle();
+  if (readErr || !data) return { ok: false, error: "Request link not found" };
+  const songs = data.songs || [];
+  const idx = songs.findIndex(s => s.id === songId);
+  if (idx === -1) return { ok: false, error: "Song not found" };
+
+  const newVotes = Math.max(0, (songs[idx].votes || 0) + direction);
+  const merged = songs.map(s => s.id === songId ? { ...s, votes: newVotes } : s);
+  const pending   = merged.filter(s => !s.completed);
+  const completed = merged.filter(s => s.completed);
+  pending.sort((a, b) => (b.votes || 0) - (a.votes || 0));
+
+  const { error: writeErr } = await sb.from("folders")
+    .update({ songs: [...pending, ...completed] }).eq("request_token", token);
+  if (writeErr) return { ok: false, error: writeErr.message };
+  return { ok: true, votes: newVotes };
+}
+
 const SHARE_URL_MAX = 60000;
 
 async function encodeShareLink(folder, user, songs) {
@@ -2786,6 +2814,10 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
             <span className={`text-xs px-1.5 py-0.5 rounded-full mt-1 inline-block ${isActive ? "curated-badge" : "text-gray-600 bg-gray-800"}`}>
               {song.type === "curated" ? "⭐ Curated" : "🎵 Live"}
             </span>
+            {song.votes > 0 && (
+              <span title="Audience votes — upvoted songs move up the queue"
+                className="text-xs text-pink-400 ml-1">❤️ {song.votes}</span>
+            )}
           </div>
         </div>
         {onToggleCompleted && (
@@ -3428,7 +3460,10 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                         <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${s.id===song.id?"text-violet-400":"text-gray-700"}`}>{i+1}</span>
                         <div className="min-w-0 flex-1">
                           <div className={`text-sm font-semibold leading-tight truncate ${s.completed?"line-through":""} ${s.id===song.id?"text-violet-200":"text-gray-300"}`}>{s.title}</div>
-                          <div className="text-xs text-gray-600 truncate mt-0.5">{s.artist || s.singer}</div>
+                          <div className="text-xs text-gray-600 truncate mt-0.5">
+                            {s.artist || s.singer}
+                            {s.votes > 0 && <span className="text-pink-400 ml-1.5">❤️ {s.votes}</span>}
+                          </div>
                         </div>
                       </div>
                       {onToggleCompleted && (
@@ -3920,6 +3955,10 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
+              {song.votes > 0 && (
+                <span title="Audience votes — upvoted songs move up the queue"
+                  className="text-xs text-pink-400 flex items-center gap-0.5 px-1.5">❤️ {song.votes}</span>
+              )}
               {!(broadcastModerator && !isBroadcasting) && (
                 <button onClick={()=>onEditSong(song)} title="Edit lyrics"
                   className="text-gray-600 hover:text-violet-400 text-sm px-1.5 transition-all">✎</button>
@@ -4497,6 +4536,11 @@ function RequestSongPage({ token }) {
   const [language, setLanguage]     = React.useState("Tamil");
   const [addedIds, setAddedIds]     = React.useState(() => new Set());
   const [addingId, setAddingId]     = React.useState(null);
+  const [votingId, setVotingId]     = React.useState(null);
+  // Which songs *this device* has upvoted on this request link — scoped per
+  // token so voting on one session's link doesn't bleed into another's.
+  const votedKey = `jb_voted_${token}`;
+  const [votedIds, setVotedIds]     = React.useState(() => new Set(LS.get(votedKey, [])));
   const [toast, showToast]          = useToast();
 
   const { results, loading, artistNotFound, catalogError, artistActive,
@@ -4537,6 +4581,28 @@ function RequestSongPage({ token }) {
       refreshFolder();
     } else {
       showToast(res.error || "Couldn't add — try again");
+    }
+  };
+
+  // Toggle: tap the heart to upvote, tap again to retract. Upvoted songs get
+  // re-sorted to the top of the real session queue server-side, not just
+  // reordered in this view.
+  const handleVote = async (song) => {
+    const alreadyVoted = votedIds.has(song.id);
+    const direction = alreadyVoted ? -1 : 1;
+    setVotingId(song.id);
+    const res = await voteForSong(token, song.id, direction);
+    setVotingId(null);
+    if (res.ok) {
+      setVotedIds(prev => {
+        const next = new Set(prev);
+        alreadyVoted ? next.delete(song.id) : next.add(song.id);
+        LS.set(votedKey, [...next]);
+        return next;
+      });
+      refreshFolder();
+    } else {
+      showToast(res.error || "Couldn't vote — try again");
     }
   };
 
@@ -4670,13 +4736,28 @@ function RequestSongPage({ token }) {
               {(!folder.songs || folder.songs.length === 0) ? (
                 <p className="text-xs text-gray-600 text-center md:text-left py-4">No songs requested yet — be the first!</p>
               ) : (() => {
-                const pending   = [...folder.songs].filter(s => !s.completed).reverse();
+                // Pending shown in actual queue order now — that order is
+                // exactly what votes reorder server-side, so this list is
+                // "top of the real queue" reading top to bottom, not just a
+                // recency list. Completed songs aren't vote-sorted, so most
+                // recently finished first still reads fine there.
+                const pending   = [...folder.songs].filter(s => !s.completed);
                 const completed = [...folder.songs].filter(s => s.completed).reverse();
                 const row = s => (
                   <div key={s.id}
-                    className={`bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs ${s.completed ? "opacity-50" : ""}`}>
-                    <span className={`text-gray-200 font-medium ${s.completed ? "line-through" : ""}`}>{s.completed ? "✓ " : ""}{s.title}</span>
-                    <span className="text-gray-500"> · {s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</span>
+                    className={`bg-[#15152280] border border-[#2a2a3e] rounded-lg px-3 py-2 text-xs flex items-center justify-between gap-2 ${s.completed ? "opacity-50" : ""}`}>
+                    <div className="min-w-0">
+                      <div className={`text-gray-200 font-medium truncate ${s.completed ? "line-through" : ""}`}>{s.completed ? "✓ " : ""}{s.title}</div>
+                      <div className="text-gray-500 truncate">{s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</div>
+                    </div>
+                    {!s.completed && (
+                      <button onClick={()=>handleVote(s)} disabled={votingId===s.id}
+                        title={votedIds.has(s.id) ? "Retract your vote" : "Vote this song up the queue"}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
+                        <span>{votedIds.has(s.id) ? "❤️" : "🤍"}</span>
+                        <span className="font-semibold">{s.votes || 0}</span>
+                      </button>
+                    )}
                   </div>
                 );
                 return (
