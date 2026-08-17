@@ -5055,8 +5055,15 @@ function App() {
   // Songs link (that writes straight to Supabase, bypassing this device's
   // handlers entirely). Runs quietly on every login/app load; no toast, no
   // button, nothing for the user to trigger.
+  // The folder was briefly called this before being renamed to All Songs —
+  // treated as just another regular source folder to merge from below, then
+  // deleted outright once its songs have landed in All Songs, so it doesn't
+  // keep sitting around as a leftover duplicate.
+  const LEGACY_MASTER_NAME = "🗂️ Master";
+
   const reconcileAllSongsFolder = async (foldersList) => {
     const allSongsFolder = foldersList.find(f => f.name === ALL_SONGS_NAME);
+    const legacyMaster   = foldersList.find(f => f.name === LEGACY_MASTER_NAME);
     const allSongs = foldersList.filter(f => f.id !== allSongsFolder?.id).flatMap(f => f.songs || []);
 
     // On a dedupe collision, prefer whichever copy already has lyrics
@@ -5081,19 +5088,28 @@ function App() {
     const needsResort = currentSongs.length > 0 &&
       currentSongs.map(s => s.id).join(",") !== sortAlphabetically(currentSongs).map(s => s.id).join(",");
 
-    if (!toAdd.length && !needsResort) return;
+    if (toAdd.length || needsResort) {
+      await fillLyricsFromArchive(toAdd);
+      const lockedSongs = toAdd.map(lockInCurrentLyrics);
 
-    await fillLyricsFromArchive(toAdd);
-    const lockedSongs = toAdd.map(lockInCurrentLyrics);
-
-    let folder = allSongsFolder;
-    if (!folder) {
-      if (!lockedSongs.length) return;
-      folder = await db.createFolder(user, ALL_SONGS_NAME);
-      setFolders(f => [...f, folder]);
+      let folder = allSongsFolder;
+      if (!folder && lockedSongs.length) {
+        folder = await db.createFolder(user, ALL_SONGS_NAME);
+        setFolders(f => [...f, folder]);
+      }
+      if (folder) {
+        const updated = await db.mutateFolderSongs(user, folder, songs => sortAlphabetically([...songs, ...lockedSongs]));
+        setFolders(f => f.map(x => x.id === updated.id ? updated : x));
+      }
     }
-    const updated = await db.mutateFolderSongs(user, folder, songs => sortAlphabetically([...songs, ...lockedSongs]));
-    setFolders(f => f.map(x => x.id === updated.id ? updated : x));
+
+    // Always attempt this, independent of whether a merge happened above —
+    // covers the case where Master's songs were already folded in earlier
+    // but the empty folder itself was never cleaned up.
+    if (legacyMaster) {
+      await db.deleteFolder(user, legacyMaster.id);
+      setFolders(f => f.filter(x => x.id !== legacyMaster.id));
+    }
   };
 
   // Randomizes the order of pending songs and moves completed ones to the
