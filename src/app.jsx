@@ -2392,9 +2392,16 @@ function AuthPage({onLogin}) {
 
 // ─── Share / Import modals ────────────────────────────────────────────
 // ─── Settings Modal ──────────────────────────────────────────────────
-function SettingsModal({ onClose, showToast }) {
+function SettingsModal({ onClose, showToast, onBuildMasterFolder }) {
   const [settings, setLocal] = React.useState(() => getSettings());
   const [uploading, setUploading] = React.useState(false);
+  const [building, setBuilding] = React.useState(false);
+
+  const buildMaster = async () => {
+    setBuilding(true);
+    try { await onBuildMasterFolder(); }
+    finally { setBuilding(false); }
+  };
 
   const update = (patch) => {
     const next = { ...settings, ...patch };
@@ -2459,6 +2466,21 @@ function SettingsModal({ onClose, showToast }) {
         <p className="text-xs text-gray-600 mt-5 text-center">
           Changes take effect on the next song you open. Cached songs unaffected.
         </p>
+
+        {onBuildMasterFolder && (
+          <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
+            <label className="text-xs text-gray-400 font-medium block mb-2">Master folder</label>
+            <button onClick={buildMaster} disabled={building}
+              className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+              {building ? "Building…" : "🗂️ Build Master Folder"}
+            </button>
+            <p className="text-xs text-gray-600 mt-2 text-center">
+              Copies every song from every folder into one "🗂️ Master" folder,
+              deduped, with lyrics locked in — survives even if the original
+              folder gets deleted. Safe to run again any time to top it up.
+            </p>
+          </div>
+        )}
 
         {HAS_SHEETS_SYNC && (
           <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
@@ -4990,6 +5012,58 @@ function App() {
     showToast("Queue refreshed");
   };
 
+  const MASTER_FOLDER_NAME = "🗂️ Master";
+
+  // Consolidates every song across every other folder into one "Master"
+  // folder — deduped by title+artist+movie, and each song's current lyrics
+  // get locked in as a custom-lyrics snapshot (same mechanism as manually
+  // editing a song's lyrics) so the copy keeps working, with the exact same
+  // source, even if the original folder gets deleted later or its cache
+  // expires. Re-running this only tops up with anything new, it never
+  // duplicates or recreates the folder.
+  const buildMasterFolder = async () => {
+    let master = folders.find(f => f.name === MASTER_FOLDER_NAME);
+    const allSongs = folders.filter(f => f.id !== master?.id).flatMap(f => f.songs || []);
+
+    // Dedupe across source folders — on a collision, prefer whichever copy
+    // already has lyrics cached, so we lock in an actual source rather than
+    // an arbitrary uncached duplicate.
+    const byKey = new Map();
+    for (const s of allSongs) {
+      const key = songMatchKey(s);
+      const existing = byKey.get(key);
+      if (!existing) { byKey.set(key, s); continue; }
+      const existingHasLyrics   = !!(existing.customLyrics || getCachedLyrics(existing.id)?.lyrics);
+      const candidateHasLyrics  = !!(s.customLyrics || getCachedLyrics(s.id)?.lyrics);
+      if (candidateHasLyrics && !existingHasLyrics) byKey.set(key, s);
+    }
+
+    // Skip anything already sitting in Master (re-running this tops it up).
+    const alreadyInMaster = new Set((master?.songs || []).map(songMatchKey));
+    const toAdd = [...byKey.values()].filter(s => !alreadyInMaster.has(songMatchKey(s)));
+    if (!toAdd.length) { showToast(master ? "Master folder is already up to date" : "No songs to add yet"); return; }
+
+    // Best-effort fill for anything not cached locally yet.
+    await fillLyricsFromArchive(toAdd);
+
+    const lockedSongs = toAdd.map(s => {
+      if (s.customLyrics || s.customLyricsRoman) return s; // already a locked-in copy
+      const cached = getCachedLyrics(s.id);
+      if (!cached?.lyrics) return s; // nothing known yet — stays a normal live song, fetches on first open
+      const native = cached.nativeLyrics || (!cached.alreadyRomanized && detectScript(cached.lyrics) ? cached.lyrics : null);
+      const roman  = cached.alreadyRomanized ? cached.lyrics : (cached.googleRoman || (!detectScript(cached.lyrics) ? cached.lyrics : null));
+      return { ...s, customLyrics: native || "", customLyricsRoman: roman || "" };
+    });
+
+    if (!master) {
+      master = await db.createFolder(user, MASTER_FOLDER_NAME);
+      setFolders(f => [...f, master]);
+    }
+    const updated = await db.mutateFolderSongs(user, master, songs => [...songs, ...lockedSongs]);
+    setFolders(f => f.map(x => x.id === updated.id ? updated : x));
+    showToast(`Added ${lockedSongs.length} song${lockedSongs.length!==1?"s":""} to Master`);
+  };
+
   // Randomizes the order of pending songs and moves completed ones to the
   // end, so the numbers that remain always read 1..N with no gaps left by
   // completed songs — e.g. 10 songs, #8 completed, shuffle → 9 songs, 1-9.
@@ -5515,7 +5589,7 @@ function App() {
         />
       )}
       {showSettings && (
-        <SettingsModal onClose={()=>setShowSettings(false)} showToast={showToast}/>
+        <SettingsModal onClose={()=>setShowSettings(false)} showToast={showToast} onBuildMasterFolder={buildMasterFolder}/>
       )}
       {toast&&<div className="toast">{toast}</div>}
     </div>
