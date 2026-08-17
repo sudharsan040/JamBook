@@ -11,6 +11,10 @@ const SCROLL_SPEEDS = [{label:"Slow",key:"slow",px:18},{label:"Medium",key:"medi
 const FONT_SCALES   = [0.85, 1, 1.15, 1.35, 1.6, 2, 2.5]; // 1 (index 1) = default 100%
 const LANG_COLORS   = {Tamil:"bg-orange-900/30 text-orange-400",Hindi:"bg-blue-900/30 text-blue-400",Telugu:"bg-green-900/30 text-green-400",Malayalam:"bg-pink-900/30 text-pink-400",Kannada:"bg-yellow-900/30 text-yellow-400",English:"bg-teal-900/30 text-teal-400"};
 const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc2626","#4f46e5","#0d9488"];
+// The auto-maintained folder that collects every song from every other
+// folder — identified by this exact name (no separate DB flag), pinned
+// first and visually distinct wherever folders are listed.
+const ALL_SONGS_NAME = "All Songs";
 
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
 // `process.env.SUPABASE_URL` / `SUPABASE_KEY` are LITERAL references that
@@ -2392,16 +2396,9 @@ function AuthPage({onLogin}) {
 
 // ─── Share / Import modals ────────────────────────────────────────────
 // ─── Settings Modal ──────────────────────────────────────────────────
-function SettingsModal({ onClose, showToast, onBuildMasterFolder }) {
+function SettingsModal({ onClose, showToast }) {
   const [settings, setLocal] = React.useState(() => getSettings());
   const [uploading, setUploading] = React.useState(false);
-  const [building, setBuilding] = React.useState(false);
-
-  const buildMaster = async () => {
-    setBuilding(true);
-    try { await onBuildMasterFolder(); }
-    finally { setBuilding(false); }
-  };
 
   const update = (patch) => {
     const next = { ...settings, ...patch };
@@ -2466,21 +2463,6 @@ function SettingsModal({ onClose, showToast, onBuildMasterFolder }) {
         <p className="text-xs text-gray-600 mt-5 text-center">
           Changes take effect on the next song you open. Cached songs unaffected.
         </p>
-
-        {onBuildMasterFolder && (
-          <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
-            <label className="text-xs text-gray-400 font-medium block mb-2">Master folder</label>
-            <button onClick={buildMaster} disabled={building}
-              className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-              {building ? "Building…" : "🗂️ Build Master Folder"}
-            </button>
-            <p className="text-xs text-gray-600 mt-2 text-center">
-              Copies every song from every folder into one "🗂️ Master" folder,
-              deduped, with lyrics locked in — survives even if the original
-              folder gets deleted. Safe to run again any time to top it up.
-            </p>
-          </div>
-        )}
 
         {HAS_SHEETS_SYNC && (
           <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
@@ -4335,12 +4317,18 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Existing folders */}
-              {folders.map(f => (
+              {/* Existing folders — "All Songs" (the auto-maintained one)
+                  always pinned first and visually set apart from the rest. */}
+              {[...folders].sort((a,b) => (b.name===ALL_SONGS_NAME)-(a.name===ALL_SONGS_NAME)).map(f => {
+                const isAllSongs = f.name === ALL_SONGS_NAME;
+                return (
                 <div key={f.id} onClick={()=>onSelectFolder(f.id)}
-                  className="folder-card bg-[#1a1a2e] border border-[#2a2a3e] rounded-2xl p-5 cursor-pointer transition-all relative">
+                  className={`folder-card rounded-2xl p-5 cursor-pointer transition-all relative ${isAllSongs ? "bg-gradient-to-br from-violet-600/20 to-[#1a1a2e] border-2 border-violet-500/50" : "bg-[#1a1a2e] border border-[#2a2a3e]"}`}>
+                  {isAllSongs && (
+                    <span className="absolute -top-2 left-4 text-[10px] font-bold tracking-wider uppercase bg-violet-600 text-white px-2 py-0.5 rounded-full">📌 Pinned</span>
+                  )}
                   <div className="flex items-start justify-between mb-3">
-                    <div className="text-4xl">📁</div>
+                    <div className="text-4xl">{isAllSongs ? "🗂️" : "📁"}</div>
                     <div className="relative" onClick={e=>e.stopPropagation()}>
                       <button
                         onClick={()=>setOpenFolderMenu(openFolderMenu===f.id?null:f.id)}
@@ -4362,7 +4350,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                               📡 Start Broadcast
                             </button>
                           )}
-                          {onRenameFolder && (
+                          {onRenameFolder && !isAllSongs && (
                             <button
                               onClick={()=>{
                                 const name = window.prompt("Rename folder", f.name);
@@ -4392,7 +4380,8 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                   <div className="text-base font-bold text-white truncate mb-1">{f.name}</div>
                   <div className="text-xs text-gray-500">{(f.songs?.length||0)} song{(f.songs?.length||0)!==1?"s":""}</div>
                 </div>
-              ))}
+                );
+              })}
 
               {/* Create new folder card */}
               {!creatingFolder ? (
@@ -4896,6 +4885,10 @@ function App() {
         archiveCustomSongs(allSongs);
         preFetchFolderSongs(allSongs).catch(() => {});
       }
+      // Quietly fold in anything All Songs is missing — e.g. songs added via
+      // a Request Songs link since this device last loaded. No toast, no
+      // button; this is the "no manual trigger" half of keeping it in sync.
+      reconcileAllSongsFolder(fs || []).catch(() => {});
     })();
   }, [user?.id]);
 
@@ -5012,56 +5005,81 @@ function App() {
     showToast("Queue refreshed");
   };
 
-  const MASTER_FOLDER_NAME = "🗂️ Master";
+  // Splits a song's currently-cached lyrics into native/roman fields and
+  // locks them on as if it had been manually edited (same mechanism as the
+  // lyrics editor) — once locked, a song never re-fetches, so its source
+  // stays fixed even if the original folder it came from gets deleted or
+  // its cache expires. A song with no lyrics known yet is left as a normal
+  // live song, which will fetch the first time it's opened from All Songs.
+  const lockInCurrentLyrics = (song) => {
+    if (song.customLyrics || song.customLyricsRoman) return song; // already locked in
+    const cached = getCachedLyrics(song.id);
+    if (!cached?.lyrics) return song;
+    const native = cached.nativeLyrics || (!cached.alreadyRomanized && detectScript(cached.lyrics) ? cached.lyrics : null);
+    const roman  = cached.alreadyRomanized ? cached.lyrics : (cached.googleRoman || (!detectScript(cached.lyrics) ? cached.lyrics : null));
+    return { ...song, customLyrics: native || "", customLyricsRoman: roman || "" };
+  };
 
-  // Consolidates every song across every other folder into one "Master"
-  // folder — deduped by title+artist+movie, and each song's current lyrics
-  // get locked in as a custom-lyrics snapshot (same mechanism as manually
-  // editing a song's lyrics) so the copy keeps working, with the exact same
-  // source, even if the original folder gets deleted later or its cache
-  // expires. Re-running this only tops up with anything new, it never
-  // duplicates or recreates the folder.
-  const buildMasterFolder = async () => {
-    let master = folders.find(f => f.name === MASTER_FOLDER_NAME);
-    const allSongs = folders.filter(f => f.id !== master?.id).flatMap(f => f.songs || []);
+  // Automatically mirrors one song into "All Songs" the moment it's added
+  // or edited anywhere else — no button, nothing to trigger. Deduped by
+  // title+artist+movie; if it's already in All Songs this is a no-op, since
+  // once a copy is locked in a later edit elsewhere shouldn't silently
+  // overwrite it (that would defeat the point of locking it in).
+  const syncSongToAllSongs = async (song, currentFolders) => {
+    if (!song || song.type === "curated") return;
+    const fs = currentFolders || folders;
+    let allSongsFolder = fs.find(f => f.name === ALL_SONGS_NAME);
+    if (allSongsFolder?.id === undefined) return; // shouldn't happen, defensive
+    const key = songMatchKey(song);
+    if (allSongsFolder && allSongsFolder.songs?.some(s => songMatchKey(s) === key)) return;
 
-    // Dedupe across source folders — on a collision, prefer whichever copy
-    // already has lyrics cached, so we lock in an actual source rather than
-    // an arbitrary uncached duplicate.
+    if (!allSongsFolder) {
+      allSongsFolder = await db.createFolder(user, ALL_SONGS_NAME);
+      setFolders(f => [...f, allSongsFolder]);
+    }
+    const locked = lockInCurrentLyrics(song);
+    const updated = await db.mutateFolderSongs(user, allSongsFolder, songs =>
+      songs.some(s => songMatchKey(s) === key) ? songs : [...songs, locked]
+    );
+    setFolders(f => f.map(x => x.id === updated.id ? updated : x));
+  };
+
+  // Background catch-up pass — folds in anything that never went through
+  // syncSongToAllSongs directly, e.g. a song someone added via a Request
+  // Songs link (that writes straight to Supabase, bypassing this device's
+  // handlers entirely). Runs quietly on every login/app load; no toast, no
+  // button, nothing for the user to trigger.
+  const reconcileAllSongsFolder = async (foldersList) => {
+    const allSongsFolder = foldersList.find(f => f.name === ALL_SONGS_NAME);
+    const allSongs = foldersList.filter(f => f.id !== allSongsFolder?.id).flatMap(f => f.songs || []);
+    if (!allSongs.length) return;
+
+    // On a dedupe collision, prefer whichever copy already has lyrics
+    // cached, so we lock in an actual source rather than an arbitrary
+    // uncached duplicate.
     const byKey = new Map();
     for (const s of allSongs) {
       const key = songMatchKey(s);
       const existing = byKey.get(key);
       if (!existing) { byKey.set(key, s); continue; }
-      const existingHasLyrics   = !!(existing.customLyrics || getCachedLyrics(existing.id)?.lyrics);
-      const candidateHasLyrics  = !!(s.customLyrics || getCachedLyrics(s.id)?.lyrics);
+      const existingHasLyrics  = !!(existing.customLyrics || getCachedLyrics(existing.id)?.lyrics);
+      const candidateHasLyrics = !!(s.customLyrics || getCachedLyrics(s.id)?.lyrics);
       if (candidateHasLyrics && !existingHasLyrics) byKey.set(key, s);
     }
+    const alreadyIn = new Set((allSongsFolder?.songs || []).map(songMatchKey));
+    const toAdd = [...byKey.values()].filter(s => !alreadyIn.has(songMatchKey(s)));
+    if (!toAdd.length) return;
 
-    // Skip anything already sitting in Master (re-running this tops it up).
-    const alreadyInMaster = new Set((master?.songs || []).map(songMatchKey));
-    const toAdd = [...byKey.values()].filter(s => !alreadyInMaster.has(songMatchKey(s)));
-    if (!toAdd.length) { showToast(master ? "Master folder is already up to date" : "No songs to add yet"); return; }
-
-    // Best-effort fill for anything not cached locally yet.
     await fillLyricsFromArchive(toAdd);
+    const lockedSongs = toAdd.map(lockInCurrentLyrics);
 
-    const lockedSongs = toAdd.map(s => {
-      if (s.customLyrics || s.customLyricsRoman) return s; // already a locked-in copy
-      const cached = getCachedLyrics(s.id);
-      if (!cached?.lyrics) return s; // nothing known yet — stays a normal live song, fetches on first open
-      const native = cached.nativeLyrics || (!cached.alreadyRomanized && detectScript(cached.lyrics) ? cached.lyrics : null);
-      const roman  = cached.alreadyRomanized ? cached.lyrics : (cached.googleRoman || (!detectScript(cached.lyrics) ? cached.lyrics : null));
-      return { ...s, customLyrics: native || "", customLyricsRoman: roman || "" };
-    });
-
-    if (!master) {
-      master = await db.createFolder(user, MASTER_FOLDER_NAME);
-      setFolders(f => [...f, master]);
+    let folder = allSongsFolder;
+    if (!folder) {
+      folder = await db.createFolder(user, ALL_SONGS_NAME);
+      setFolders(f => [...f, folder]);
     }
-    const updated = await db.mutateFolderSongs(user, master, songs => [...songs, ...lockedSongs]);
+    const updated = await db.mutateFolderSongs(user, folder, songs => [...songs, ...lockedSongs]);
     setFolders(f => f.map(x => x.id === updated.id ? updated : x));
-    showToast(`Added ${lockedSongs.length} song${lockedSongs.length!==1?"s":""} to Master`);
   };
 
   // Randomizes the order of pending songs and moves completed ones to the
@@ -5100,6 +5118,9 @@ function App() {
       songs.some(s => s.id === song.id) ? songs : [...songs, song]
     );
     setFolders(f => f.map(x => x.id === fid ? updated : x));
+    if (folder.name !== ALL_SONGS_NAME) {
+      syncSongToAllSongs(song, folders.map(x => x.id === fid ? updated : x));
+    }
   };
 
   const removeFromFolder = async (fid, sid) => {
@@ -5218,6 +5239,13 @@ function App() {
       { title: data.title, artist: data.artist, album: data.album },
       { native: data.customLyrics, roman: data.customLyricsRoman, source: "custom" }
     );
+
+    if (folder.name !== ALL_SONGS_NAME) {
+      const syncedSong = (mode === "edit" && song)
+        ? updated.songs.find(s => s.id === song.id)
+        : updated.songs[updated.songs.length - 1];
+      if (syncedSong) syncSongToAllSongs(syncedSong, folders.map(x => x.id === folderId ? updated : x));
+    }
 
     // If I'm broadcasting on this folder, push the lyrics edit to followers
     if (isBroadcasting && broadcastChannelRef.current && activeFolderId === folderId) {
@@ -5589,7 +5617,7 @@ function App() {
         />
       )}
       {showSettings && (
-        <SettingsModal onClose={()=>setShowSettings(false)} showToast={showToast} onBuildMasterFolder={buildMasterFolder}/>
+        <SettingsModal onClose={()=>setShowSettings(false)} showToast={showToast}/>
       )}
       {toast&&<div className="toast">{toast}</div>}
     </div>
