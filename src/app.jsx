@@ -5020,6 +5020,12 @@ function App() {
     return { ...song, customLyrics: native || "", customLyricsRoman: roman || "" };
   };
 
+  // A-Z by title, case-insensitive — the whole point of All Songs is being
+  // able to find things fast, not queue order, so it's kept alphabetical
+  // rather than insertion order like a normal jam-session folder.
+  const sortAlphabetically = songs =>
+    [...songs].sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }));
+
   // Automatically mirrors one song into "All Songs" the moment it's added
   // or edited anywhere else — no button, nothing to trigger. Deduped by
   // title+artist+movie; if it's already in All Songs this is a no-op, since
@@ -5039,7 +5045,7 @@ function App() {
     }
     const locked = lockInCurrentLyrics(song);
     const updated = await db.mutateFolderSongs(user, allSongsFolder, songs =>
-      songs.some(s => songMatchKey(s) === key) ? songs : [...songs, locked]
+      songs.some(s => songMatchKey(s) === key) ? songs : sortAlphabetically([...songs, locked])
     );
     setFolders(f => f.map(x => x.id === updated.id ? updated : x));
   };
@@ -5052,7 +5058,6 @@ function App() {
   const reconcileAllSongsFolder = async (foldersList) => {
     const allSongsFolder = foldersList.find(f => f.name === ALL_SONGS_NAME);
     const allSongs = foldersList.filter(f => f.id !== allSongsFolder?.id).flatMap(f => f.songs || []);
-    if (!allSongs.length) return;
 
     // On a dedupe collision, prefer whichever copy already has lyrics
     // cached, so we lock in an actual source rather than an arbitrary
@@ -5068,17 +5073,26 @@ function App() {
     }
     const alreadyIn = new Set((allSongsFolder?.songs || []).map(songMatchKey));
     const toAdd = [...byKey.values()].filter(s => !alreadyIn.has(songMatchKey(s)));
-    if (!toAdd.length) return;
+
+    // Also catches a pre-existing All Songs folder saved in old insertion
+    // order, from before alphabetical sorting — re-sorts it even when
+    // there's nothing new to add.
+    const currentSongs = allSongsFolder?.songs || [];
+    const needsResort = currentSongs.length > 0 &&
+      currentSongs.map(s => s.id).join(",") !== sortAlphabetically(currentSongs).map(s => s.id).join(",");
+
+    if (!toAdd.length && !needsResort) return;
 
     await fillLyricsFromArchive(toAdd);
     const lockedSongs = toAdd.map(lockInCurrentLyrics);
 
     let folder = allSongsFolder;
     if (!folder) {
+      if (!lockedSongs.length) return;
       folder = await db.createFolder(user, ALL_SONGS_NAME);
       setFolders(f => [...f, folder]);
     }
-    const updated = await db.mutateFolderSongs(user, folder, songs => [...songs, ...lockedSongs]);
+    const updated = await db.mutateFolderSongs(user, folder, songs => sortAlphabetically([...songs, ...lockedSongs]));
     setFolders(f => f.map(x => x.id === updated.id ? updated : x));
   };
 
