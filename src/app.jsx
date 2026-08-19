@@ -1993,6 +1993,29 @@ async function fillLyricsFromArchive(songs) {
     console.warn("[archive-read]", e.message);
   }
 }
+// Single-song lookup against song_archive — checked in parallel with the
+// live source race (below) whenever a song's lyrics aren't cached yet, so
+// a song we've already archived can be used immediately instead of always
+// waiting on a live scrape. Tagged with source "Database" so the UI can
+// show where it actually came from.
+async function lookupArchiveLyrics(song) {
+  if (!HAS_SUPABASE || !song) return null;
+  try {
+    const { data, error } = await sb.from("song_archive")
+      .select("lyrics_native,lyrics_roman")
+      .eq("dedupe_key", songMatchKey(song))
+      .maybeSingle();
+    if (error || !data || (!data.lyrics_native && !data.lyrics_roman)) return null;
+    return {
+      lyrics:           data.lyrics_native || data.lyrics_roman,
+      source:           "Database",
+      nativeLyrics:     data.lyrics_native || undefined,
+      googleRoman:      data.lyrics_native ? (data.lyrics_roman || undefined) : undefined,
+      alreadyRomanized: !data.lyrics_native && !!data.lyrics_roman,
+    };
+  } catch { return null; }
+}
+
 // Pre-fetch lyrics silently and store in cache. Called when a song is added
 // to a folder, when a folder is loaded on app start, and when a shared folder
 // is imported. Also pre-caches the Google romanization so the user sees
@@ -2010,7 +2033,13 @@ async function preFetchLyrics(song) {
   try {
     let data = existing;
     if (!data) {
-      data = await fetchLyricsRace(song.artist, song.title, song.album);
+      // Fire both at once — our own database lookup is normally much
+      // faster than a live scrape, so it wins whenever it has an answer,
+      // without ever waiting on the (still-running) live race first.
+      const archivePromise = lookupArchiveLyrics(song);
+      const livePromise    = fetchLyricsRace(song.artist, song.title, song.album);
+      data = await archivePromise;
+      if (!data) data = await livePromise;
       if (!data) return;
       setCachedLyrics(song.id, data);
     }
@@ -3198,6 +3227,9 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <div className="flex-1 min-w-0">
               <h1 className="text-sm sm:text-xl font-bold text-white truncate leading-tight flex items-center gap-1.5">
                 <span className="truncate">{song.title}</span>
+                {lyricsData?.source === "Database" && (
+                  <span title="Lyrics from our own database" className="text-xs flex-shrink-0">🗄️</span>
+                )}
                 {(isBroadcasting || (broadcastModerator && followingBroadcast)) && (
                   <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
                 )}
