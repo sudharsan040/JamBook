@@ -5118,14 +5118,27 @@ function App() {
   const shuffleQueueNumbers = async (fid) => {
     const folder = folders.find(f => f.id === fid);
     if (!folder) return;
+    // Upvoted songs (audience votes on the request page) keep their exact
+    // position — shuffle only randomizes the songs nobody's voted for,
+    // slotting them into whatever spots are left.
     const doShuffle = songs => {
       const pending   = songs.filter(s => !s.completed);
       const completed = songs.filter(s => s.completed);
-      for (let i = pending.length - 1; i > 0; i--) {
+
+      const fixedIndices = new Set();
+      const shufflePool  = [];
+      pending.forEach((s, i) => {
+        if (s.votes > 0) fixedIndices.add(i);
+        else shufflePool.push(s);
+      });
+      for (let i = shufflePool.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [pending[i], pending[j]] = [pending[j], pending[i]];
+        [shufflePool[i], shufflePool[j]] = [shufflePool[j], shufflePool[i]];
       }
-      return [...pending, ...completed];
+      let poolIdx = 0;
+      const reordered = pending.map((s, i) => fixedIndices.has(i) ? s : shufflePool[poolIdx++]);
+
+      return [...reordered, ...completed];
     };
     // Optimistic local shuffle for instant feedback...
     setFolders(f => f.map(x => x.id === fid ? { ...x, songs: doShuffle(x.songs) } : x));
