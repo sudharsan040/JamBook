@@ -2124,7 +2124,7 @@ const db = {
   async getFolders(user) {
     if (HAS_SUPABASE) {
       const { data, error } = await sb.from("folders")
-        .select("*").eq("user_id", user.id).order("created_at");
+        .select("*").eq("user_id", user.id).order("created_at", { ascending: false });
       if (error) { console.error(error); return []; }
       return data.map(r => ({
         id: r.id, name: r.name,
@@ -2137,7 +2137,7 @@ const db = {
         originalOwnerName: r.original_owner_name|| null,
       }));
     }
-    const fs = getUserFolders(user.id);
+    const fs = [...getUserFolders(user.id)].reverse(); // newest first — stored oldest-first (append on create)
     return fs.map(f => {
       if (f.songs) return f;
       const songs = (f.songIds || []).map(id => resolveSongById(id)).filter(Boolean);
@@ -4966,7 +4966,7 @@ function App() {
 
   const createFolder = async (name) => {
     const newF = await db.createFolder(user, name);
-    setFolders(f => [...f, newF]);
+    setFolders(f => [newF, ...f]); // newest first, matching the fetch order
     return newF;
   };
 
@@ -5327,7 +5327,7 @@ function App() {
     if (entry.ownerId)       newF.originalOwnerId  = entry.ownerId;
     if (entry.ownerName)     newF.originalOwnerName = entry.ownerName;
     await db.updateFolder(user, newF);
-    setFolders(f => [...f, newF]);
+    setFolders(f => [newF, ...f]); // newest first, matching the fetch order
     setPendingShare(null);
     clearShareFromUrl();
 
