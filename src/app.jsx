@@ -1730,12 +1730,17 @@ async function fetchShareByToken(token) {
 // A separate, stable token (distinct from share_token) that lets anyone with
 // the link add songs directly into the LIVE folder — no account needed.
 // Requires the `request_token` column + matching RLS policies (see README).
+// Used for the request page's repeating background poll — a Postgres
+// function that returns only title/artist/movie/completed/votes per song,
+// not the full row (which includes lyrics text for every song). That poll
+// runs every 30s for as long as anyone has the page open, so trimming its
+// payload matters a lot more than trimming a one-off read does.
 async function fetchFolderByRequestToken(token) {
   if (!HAS_SUPABASE || !token) return null;
-  const { data, error } = await sb.from("folders")
-    .select("id,name,songs").eq("request_token", token).limit(1).maybeSingle();
-  if (error || !data) return null;
-  return { id: data.id, name: data.name, songs: data.songs || [] };
+  const { data, error } = await sb.rpc("folder_songs_slim", { p_token: token });
+  if (error || !data || !data.length) return null;
+  const row = data[0];
+  return { id: row.id, name: row.name, songs: row.songs || [] };
 }
 
 // Read-modify-write append. Two people requesting in the same instant could
