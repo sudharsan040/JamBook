@@ -1760,12 +1760,12 @@ async function addSongViaRequestToken(token, song) {
 }
 
 // Casts (or retracts, direction=-1) an upvote for a song already in the
-// queue, then re-sorts pending songs by vote count — highest first, ties
-// keeping their existing relative order (stable sort) — so upvoted songs
-// actually move to the top of the real session queue, not just a display
-// list. Completed songs stay put at the end either way. Same read-then-write
-// trade-off as addSongViaRequestToken above: fine for a casual jam session,
-// not built to survive many people voting in the exact same instant.
+// queue. Just updates the vote count — doesn't touch song order at all;
+// the queue stays in whatever order it's already in (newest-added on top
+// on the request page), and the host can sort or shuffle by votes
+// explicitly if they want to act on them. Same read-then-write trade-off
+// as addSongViaRequestToken above: fine for a casual jam session, not
+// built to survive many people voting in the exact same instant.
 async function voteForSong(token, songId, direction) {
   if (!HAS_SUPABASE || !token) return { ok: false, error: "Not configured" };
   const { data, error: readErr } = await sb.from("folders")
@@ -1777,12 +1777,9 @@ async function voteForSong(token, songId, direction) {
 
   const newVotes = Math.max(0, (songs[idx].votes || 0) + direction);
   const merged = songs.map(s => s.id === songId ? { ...s, votes: newVotes } : s);
-  const pending   = merged.filter(s => !s.completed);
-  const completed = merged.filter(s => s.completed);
-  pending.sort((a, b) => (b.votes || 0) - (a.votes || 0));
 
   const { error: writeErr } = await sb.from("folders")
-    .update({ songs: [...pending, ...completed] }).eq("request_token", token);
+    .update({ songs: merged }).eq("request_token", token);
   if (writeErr) return { ok: false, error: writeErr.message };
   return { ok: true, votes: newVotes };
 }
@@ -2884,7 +2881,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
 
 function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
-  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue}) {
+  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue,onSortQueue}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -2949,6 +2946,19 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
             </button>
           )}
         </div>
+        {onSortQueue && (
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <span className="text-xs text-gray-600 flex-shrink-0">Sort:</span>
+            <button onClick={()=>onSortQueue(folder.id, "alpha")} disabled={pending.length<2}
+              title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              🔤 A–Z
+            </button>
+            <button onClick={()=>onSortQueue(folder.id, "votes")} disabled={pending.length<2}
+              title="Sort by votes, most-voted first" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              ❤️ Votes
+            </button>
+          </div>
+        )}
         {canBroadcast && isBroadcasting && (
           <div className="flex items-center justify-center gap-1.5 mt-1.5 text-xs text-red-300">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
@@ -3000,7 +3010,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
 }
 
 // ─── Curated Song View ────────────────────────────────────────────────
-function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse,onShuffleQueue,onRefreshQueue}) {
+function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse,onShuffleQueue,onRefreshQueue,onSortQueue}) {
   const [showChords,setShowChords]   = React.useState(true);
   const [script,setScript]           = React.useState("roman");
   const [showFolderMenu,setFolderMenu] = React.useState(false);
@@ -3081,7 +3091,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         </div>
       </div>
       {activeFolder&&folderSongs&&folderSongs.length>0&&(
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse} onShuffleQueue={onShuffleQueue} onRefreshQueue={onRefreshQueue}/>
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse} onShuffleQueue={onShuffleQueue} onRefreshQueue={onRefreshQueue} onSortQueue={onSortQueue}/>
       )}
     </div>
   );
@@ -3106,7 +3116,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
-  queueCollapsed, onToggleQueueCollapse, onShuffleQueue, onRefreshQueue}) {
+  queueCollapsed, onToggleQueueCollapse, onShuffleQueue, onRefreshQueue, onSortQueue}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -3427,6 +3437,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           onToggleCollapse={onToggleQueueCollapse}
           onShuffleQueue={onShuffleQueue}
           onRefreshQueue={onRefreshQueue}
+          onSortQueue={onSortQueue}
         />
       )}
 
@@ -3473,6 +3484,19 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                   </button>
                 )}
               </div>
+              {onSortQueue && (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <span className="text-xs text-gray-600 flex-shrink-0">Sort:</span>
+                  <button onClick={()=>onSortQueue(activeFolder.id, "alpha")} disabled={pendingQueueSongs.length<2}
+                    title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    🔤 A–Z
+                  </button>
+                  <button onClick={()=>onSortQueue(activeFolder.id, "votes")} disabled={pendingQueueSongs.length<2}
+                    title="Sort by votes, most-voted first" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    ❤️ Votes
+                  </button>
+                </div>
+              )}
               {canBroadcast && isBroadcasting && (
                 <div className="flex items-center justify-center gap-1.5 mt-1.5 text-xs text-red-300">
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"/>
@@ -4826,12 +4850,9 @@ function RequestSongPage({ token }) {
               {(!folder.songs || folder.songs.length === 0) ? (
                 <p className="text-xs text-gray-600 text-center md:text-left py-4">No songs requested yet — be the first!</p>
               ) : (() => {
-                // Pending shown in actual queue order now — that order is
-                // exactly what votes reorder server-side, so this list is
-                // "top of the real queue" reading top to bottom, not just a
-                // recency list. Completed songs aren't vote-sorted, so most
-                // recently finished first still reads fine there.
-                const pending   = [...folder.songs].filter(s => !s.completed);
+                // Newest-added on top — votes no longer reorder the queue,
+                // so this is just a plain recency list again.
+                const pending   = [...folder.songs].filter(s => !s.completed).reverse();
                 const completed = [...folder.songs].filter(s => s.completed).reverse();
                 const row = s => (
                   <div key={s.id}
@@ -4842,10 +4863,9 @@ function RequestSongPage({ token }) {
                     </div>
                     {!s.completed && (
                       <button onClick={()=>handleVote(s)} disabled={votingId===s.id}
-                        title={votedIds.has(s.id) ? "Retract your vote" : "Vote this song up the queue"}
-                        className={`flex items-center gap-1 px-2 py-1 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
-                        <span>{votedIds.has(s.id) ? "❤️" : "🤍"}</span>
-                        <span className="font-semibold">{s.votes || 0}</span>
+                        title={votedIds.has(s.id) ? "Retract your vote" : "Vote for this song"}
+                        className={`flex items-center justify-center w-7 h-7 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
+                        {votedIds.has(s.id) ? "❤️" : "🤍"}
                       </button>
                     )}
                   </div>
@@ -5169,33 +5189,40 @@ function App() {
   const shuffleQueueNumbers = async (fid) => {
     const folder = folders.find(f => f.id === fid);
     if (!folder) return;
-    // Upvoted songs (audience votes on the request page) keep their exact
-    // position — shuffle only randomizes the songs nobody's voted for,
-    // slotting them into whatever spots are left.
     const doShuffle = songs => {
       const pending   = songs.filter(s => !s.completed);
       const completed = songs.filter(s => s.completed);
-
-      const fixedIndices = new Set();
-      const shufflePool  = [];
-      pending.forEach((s, i) => {
-        if (s.votes > 0) fixedIndices.add(i);
-        else shufflePool.push(s);
-      });
-      for (let i = shufflePool.length - 1; i > 0; i--) {
+      for (let i = pending.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [shufflePool[i], shufflePool[j]] = [shufflePool[j], shufflePool[i]];
+        [pending[i], pending[j]] = [pending[j], pending[i]];
       }
-      let poolIdx = 0;
-      const reordered = pending.map((s, i) => fixedIndices.has(i) ? s : shufflePool[poolIdx++]);
-
-      return [...reordered, ...completed];
+      return [...pending, ...completed];
     };
     // Optimistic local shuffle for instant feedback...
     setFolders(f => f.map(x => x.id === fid ? { ...x, songs: doShuffle(x.songs) } : x));
     // ...then persist against the freshest server state and reconcile —
     // covers any song added by someone else in the meantime too.
     const updated = await db.mutateFolderSongs(user, folder, doShuffle);
+    setFolders(f => f.map(x => x.id === fid ? updated : x));
+  };
+
+  // Explicit sort — "alpha" (A-Z by title) or "votes" (most-voted first,
+  // ties keeping their current relative order). Unlike Shuffle, this always
+  // pushes completed songs to the end too, same numbering rule as everywhere
+  // else in the queue.
+  const sortQueueBy = async (fid, mode) => {
+    const folder = folders.find(f => f.id === fid);
+    if (!folder) return;
+    const doSort = songs => {
+      const pending   = songs.filter(s => !s.completed);
+      const completed = songs.filter(s => s.completed);
+      const sorted = mode === "alpha"
+        ? [...pending].sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base" }))
+        : [...pending].sort((a, b) => (b.votes || 0) - (a.votes || 0));
+      return [...sorted, ...completed];
+    };
+    setFolders(f => f.map(x => x.id === fid ? { ...x, songs: doSort(x.songs) } : x));
+    const updated = await db.mutateFolderSongs(user, folder, doSort);
     setFolders(f => f.map(x => x.id === fid ? updated : x));
   };
 
@@ -5615,6 +5642,7 @@ function App() {
             queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
             onShuffleQueue={shuffleQueueNumbers}
             onRefreshQueue={refreshFolder}
+            onSortQueue={sortQueueBy}
           />
         )}
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
@@ -5639,6 +5667,7 @@ function App() {
             queueCollapsed={queueCollapsed} onToggleQueueCollapse={()=>setQueueCollapsed(v=>!v)}
             onShuffleQueue={shuffleQueueNumbers}
             onRefreshQueue={refreshFolder}
+            onSortQueue={sortQueueBy}
           />
         )}
         {view==="folder"&&activeFolder&&(
