@@ -4606,8 +4606,22 @@ function RequestSongPage({ token }) {
     refreshFolder();
     // Poll so the "already added" list stays fresh as other people in the
     // audience request songs too — no realtime channel for this bare page.
-    const id = setInterval(refreshFolder, 10000);
-    return () => clearInterval(id);
+    // Each poll pulls the folder's full songs payload (including lyrics
+    // text), so this is real bandwidth per open tab — kept slow (30s, was
+    // 10s) and, more importantly, paused entirely while the tab isn't
+    // visible (someone leaving this open in a background tab all evening
+    // was costing egress for no benefit; refreshes once immediately when
+    // they switch back instead).
+    let id = null;
+    const start = () => { if (!id) id = setInterval(refreshFolder, 30000); };
+    const stop  = () => { if (id) { clearInterval(id); id = null; } };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") { refreshFolder(); start(); }
+      else stop();
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [refreshFolder]);
 
   // Songs already in the session queue — from the host, or from anyone else
