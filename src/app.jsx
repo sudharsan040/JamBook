@@ -1857,6 +1857,29 @@ async function voteForSong(token, songId, direction) {
   return { ok: true, votes: newVotes };
 }
 
+// Same shape as voteForSong, tracking a separate `dislikes` count. Not
+// shown as a number on the request page (just a toggleable thumb) — the
+// count only surfaces in the host's own folder view, as a signal for which
+// songs to manually clear out to free up space, not something the queue
+// auto-acts on.
+async function dislikeSong(token, songId, direction) {
+  if (!HAS_SUPABASE || !token) return { ok: false, error: "Not configured" };
+  const { data, error: readErr } = await sb.from("folders")
+    .select("songs").eq("request_token", token).limit(1).maybeSingle();
+  if (readErr || !data) return { ok: false, error: "Request link not found" };
+  const songs = data.songs || [];
+  const idx = songs.findIndex(s => s.id === songId);
+  if (idx === -1) return { ok: false, error: "Song not found" };
+
+  const newDislikes = Math.max(0, (songs[idx].dislikes || 0) + direction);
+  const merged = songs.map(s => s.id === songId ? { ...s, dislikes: newDislikes } : s);
+
+  const { error: writeErr } = await sb.from("folders")
+    .update({ songs: merged }).eq("request_token", token);
+  if (writeErr) return { ok: false, error: writeErr.message };
+  return { ok: true, dislikes: newDislikes };
+}
+
 const SHARE_URL_MAX = 60000;
 
 async function encodeShareLink(folder, user, songs) {
@@ -2982,6 +3005,10 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
               <span title="Audience votes — upvoted songs move up the queue"
                 className="text-xs text-pink-400 ml-1">❤️ {song.votes}</span>
             )}
+            {song.dislikes > 0 && (
+              <span title="Audience dislikes — a signal for songs to clear out"
+                className="text-xs text-orange-400 ml-1">👎 {song.dislikes}</span>
+            )}
           </div>
         </div>
         {onToggleCompleted && (
@@ -3664,6 +3691,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                           <div className="text-xs text-gray-600 truncate mt-0.5">
                             {s.artist || s.singer}
                             {s.votes > 0 && <span className="text-pink-400 ml-1.5">❤️ {s.votes}</span>}
+                            {s.dislikes > 0 && <span className="text-orange-400 ml-1.5">👎 {s.dislikes}</span>}
                           </div>
                         </div>
                       </div>
@@ -4163,6 +4191,10 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
               {song.votes > 0 && (
                 <span title="Audience votes — upvoted songs move up the queue"
                   className="text-xs text-pink-400 flex items-center gap-0.5 px-1.5">❤️ {song.votes}</span>
+              )}
+              {song.dislikes > 0 && (
+                <span title="Audience dislikes — a signal for songs to clear out"
+                  className="text-xs text-orange-400 flex items-center gap-0.5 px-1.5">👎 {song.dislikes}</span>
               )}
               {!(broadcastModerator && !isBroadcasting) && (
                 <button onClick={()=>onEditSong(song)} title="Edit lyrics"
@@ -4754,6 +4786,11 @@ function RequestSongPage({ token }) {
   // token so voting on one session's link doesn't bleed into another's.
   const votedKey = `jb_voted_${token}`;
   const [votedIds, setVotedIds]     = React.useState(() => new Set(LS.get(votedKey, [])));
+  // Same idea for dislikes — tracked locally so the thumb toggles correctly,
+  // but the count itself is never shown here, only in the host's folder view.
+  const dislikedKey = `jb_disliked_${token}`;
+  const [dislikedIds, setDislikedIds] = React.useState(() => new Set(LS.get(dislikedKey, [])));
+  const [dislikingId, setDislikingId] = React.useState(null);
   // A random id for this device, reused forever once generated — not tied
   // to any personal info, just enough to let the (soft) per-person request
   // cap count "songs from this browser" within whichever session it's used on.
@@ -4871,6 +4908,40 @@ function RequestSongPage({ token }) {
       setVotedLocally(song.id, alreadyVoted);
       applyVoteLocally(song.id, -direction);
       showToast(res.error || "Couldn't vote — try again");
+    }
+  };
+
+  const handleDislike = async (song) => {
+    if (dislikingId === song.id) return;
+    const alreadyDisliked = dislikedIds.has(song.id);
+    const direction = alreadyDisliked ? -1 : 1;
+
+    setDislikedIds(prev => {
+      const next = new Set(prev);
+      alreadyDisliked ? next.delete(song.id) : next.add(song.id);
+      LS.set(dislikedKey, [...next]);
+      return next;
+    });
+    setFolder(prev => prev && {
+      ...prev,
+      songs: prev.songs.map(s => s.id === song.id ? { ...s, dislikes: Math.max(0, (s.dislikes || 0) + direction) } : s),
+    });
+    setDislikingId(song.id);
+
+    const res = await dislikeSong(token, song.id, direction);
+    setDislikingId(null);
+    if (!res.ok) {
+      setDislikedIds(prev => {
+        const next = new Set(prev);
+        alreadyDisliked ? next.add(song.id) : next.delete(song.id);
+        LS.set(dislikedKey, [...next]);
+        return next;
+      });
+      setFolder(prev => prev && {
+        ...prev,
+        songs: prev.songs.map(s => s.id === song.id ? { ...s, dislikes: Math.max(0, (s.dislikes || 0) - direction) } : s),
+      });
+      showToast(res.error || "Couldn't record — try again");
     }
   };
 
@@ -5050,6 +5121,11 @@ function RequestSongPage({ token }) {
                             🗑
                           </button>
                         )}
+                        <button onClick={()=>handleDislike(s)} disabled={dislikingId===s.id}
+                          title={dislikedIds.has(s.id) ? "Retract your dislike" : "Not feeling this one"}
+                          className={`flex items-center justify-center w-7 h-7 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${dislikedIds.has(s.id) ? "border-orange-500/50 text-orange-400 bg-orange-500/10" : "border-[#2e2e44] text-gray-500 hover:border-orange-500/40 hover:text-orange-400"}`}>
+                          👎
+                        </button>
                         <button onClick={()=>handleVote(s)} disabled={votingId===s.id}
                           title={votedIds.has(s.id) ? "Retract your vote" : "Vote for this song"}
                           className={`flex items-center justify-center w-7 h-7 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
