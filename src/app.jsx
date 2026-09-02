@@ -1808,6 +1808,30 @@ async function addSongViaRequestToken(token, song, requestedBy) {
   return { ok: true };
 }
 
+// Lets someone retract a song they requested — scoped to their own device
+// id, enforced here server-side (not just a hidden button client-side), so
+// one visitor can't remove another's request. Completed songs can't be
+// pulled back — the host's already played it, removing it now would just
+// be confusing. Freeing up a slot this way immediately opens room for that
+// person's next request under a per-person cap, same live-recheck as
+// everything else here.
+async function removeSongViaRequestToken(token, songId, requestedBy) {
+  if (!HAS_SUPABASE || !token || !requestedBy) return { ok: false, error: "Not configured" };
+  const { data, error: readErr } = await sb.from("folders")
+    .select("songs").eq("request_token", token).limit(1).maybeSingle();
+  if (readErr || !data) return { ok: false, error: "Request link not found" };
+  const songs = data.songs || [];
+  const target = songs.find(s => s.id === songId);
+  if (!target) return { ok: true }; // already gone — nothing to do
+  if (target.requestedBy !== requestedBy) return { ok: false, error: "You can only remove songs you requested." };
+  if (target.completed) return { ok: false, error: "Can't remove a song that's already been played." };
+
+  const { error: writeErr } = await sb.from("folders")
+    .update({ songs: songs.filter(s => s.id !== songId) }).eq("request_token", token);
+  if (writeErr) return { ok: false, error: writeErr.message };
+  return { ok: true };
+}
+
 // Casts (or retracts, direction=-1) an upvote for a song already in the
 // queue. Just updates the vote count — doesn't touch song order at all;
 // the queue stays in whatever order it's already in (newest-added on top
@@ -4725,6 +4749,7 @@ function RequestSongPage({ token }) {
   const [addedIds, setAddedIds]     = React.useState(() => new Set());
   const [addingId, setAddingId]     = React.useState(null);
   const [votingId, setVotingId]     = React.useState(null);
+  const [removingId, setRemovingId] = React.useState(null);
   // Which songs *this device* has upvoted on this request link — scoped per
   // token so voting on one session's link doesn't bleed into another's.
   const votedKey = `jb_voted_${token}`;
@@ -4846,6 +4871,24 @@ function RequestSongPage({ token }) {
       setVotedLocally(song.id, alreadyVoted);
       applyVoteLocally(song.id, -direction);
       showToast(res.error || "Couldn't vote — try again");
+    }
+  };
+
+  const handleRemove = async (song) => {
+    if (removingId === song.id) return;
+    setRemovingId(song.id);
+    // Optimistic — drop it locally right away rather than waiting on the
+    // round trip, same reasoning as voting.
+    setFolder(prev => prev && { ...prev, songs: prev.songs.filter(s => s.id !== song.id) });
+    const res = await removeSongViaRequestToken(token, song.id, requesterId);
+    setRemovingId(null);
+    if (res.ok) {
+      setAddedIds(prev => { const next = new Set(prev); next.delete(song.id); return next; });
+      showToast(`Removed "${song.title}"`);
+      refreshFolder();
+    } else {
+      refreshFolder(); // undo the optimistic removal by pulling the real state back
+      showToast(res.error || "Couldn't remove — try again");
     }
   };
 
@@ -4999,11 +5042,20 @@ function RequestSongPage({ token }) {
                       <div className="text-gray-500 truncate">{s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</div>
                     </div>
                     {!s.completed && (
-                      <button onClick={()=>handleVote(s)} disabled={votingId===s.id}
-                        title={votedIds.has(s.id) ? "Retract your vote" : "Vote for this song"}
-                        className={`flex items-center justify-center w-7 h-7 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
-                        {votedIds.has(s.id) ? "❤️" : "🤍"}
-                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {s.requestedBy === requesterId && (
+                          <button onClick={()=>handleRemove(s)} disabled={removingId===s.id}
+                            title="Remove your request"
+                            className="flex items-center justify-center w-7 h-7 rounded-lg border border-[#2e2e44] text-gray-500 hover:border-red-500/40 hover:text-red-400 transition-all disabled:opacity-50">
+                            🗑
+                          </button>
+                        )}
+                        <button onClick={()=>handleVote(s)} disabled={votingId===s.id}
+                          title={votedIds.has(s.id) ? "Retract your vote" : "Vote for this song"}
+                          className={`flex items-center justify-center w-7 h-7 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
+                          {votedIds.has(s.id) ? "❤️" : "🤍"}
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
