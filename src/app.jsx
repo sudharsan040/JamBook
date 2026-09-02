@@ -1767,21 +1767,43 @@ async function fetchFolderByRequestToken(token) {
   const { data, error } = await sb.rpc("folder_songs_slim", { p_token: token });
   if (error || !data || !data.length) return null;
   const row = data[0];
-  return { id: row.id, name: row.name, songs: row.songs || [] };
+  return {
+    id: row.id, name: row.name, songs: row.songs || [],
+    requestCap: row.request_cap ?? null,
+    requestCapPerUser: row.request_cap_per_user ?? null,
+  };
 }
 
 // Read-modify-write append. Two people requesting in the same instant could
 // race and clobber each other's addition — acceptable for a casual jam-session
-// tool; not meant to be a high-concurrency queue.
-async function addSongViaRequestToken(token, song) {
+// tool; not meant to be a high-concurrency queue. Caps are checked against
+// the live count at write time (not a saved flag), so raising the cap or
+// removing a song immediately frees up room for the next request — nothing
+// ever needs resetting. `requestedBy` is a random per-device id (not
+// personal info) used only for the soft per-person cap; it's easy to get
+// around by switching browsers/clearing storage, which is expected — with
+// no login on this page there's no real identity to enforce against, so
+// this is a nudge for casual use, not a hard limit.
+async function addSongViaRequestToken(token, song, requestedBy) {
   if (!HAS_SUPABASE || !token) return { ok: false, error: "Not configured" };
   const { data, error: readErr } = await sb.from("folders")
-    .select("songs").eq("request_token", token).limit(1).maybeSingle();
+    .select("songs,request_cap,request_cap_per_user").eq("request_token", token).limit(1).maybeSingle();
   if (readErr || !data) return { ok: false, error: "Request link not found" };
   const songs = data.songs || [];
   if (songs.some(s => s.id === song.id)) return { ok: true, alreadyAdded: true };
+
+  if (data.request_cap != null && songs.length >= data.request_cap) {
+    return { ok: false, error: `This session has reached its ${data.request_cap}-song limit.` };
+  }
+  if (data.request_cap_per_user != null && requestedBy) {
+    const mine = songs.filter(s => s.requestedBy === requestedBy).length;
+    if (mine >= data.request_cap_per_user) {
+      return { ok: false, error: `You've already requested ${data.request_cap_per_user} song${data.request_cap_per_user===1?"":"s"} — that's the limit per person.` };
+    }
+  }
+
   const { error: writeErr } = await sb.from("folders")
-    .update({ songs: [...songs, song] }).eq("request_token", token);
+    .update({ songs: [...songs, { ...song, requestedBy: requestedBy || undefined }] }).eq("request_token", token);
   if (writeErr) return { ok: false, error: writeErr.message };
   return { ok: true };
 }
@@ -2190,6 +2212,8 @@ const db = {
         songs: (r.songs || []).map(s => { const c={...s}; delete c._shareLyrics; return c; }),
         shareCode:         r.share_token        || null,
         requestToken:      r.request_token      || null,
+        requestCap:            r.request_cap            ?? null,
+        requestCapPerUser:     r.request_cap_per_user    ?? null,
         broadcastRoom:     r.broadcast_room     || null,
         originalOwnerId:   r.original_owner_id  || null,
         originalOwnerName: r.original_owner_name|| null,
@@ -2240,6 +2264,8 @@ const db = {
         songs:                folder.songs,
         share_token:          folder.shareCode || null,
         request_token:        folder.requestToken || null,
+        request_cap:            folder.requestCap ?? null,
+        request_cap_per_user:   folder.requestCapPerUser ?? null,
         broadcast_room:       folder.broadcastRoom     || null,
         original_owner_id:    folder.originalOwnerId   || null,
         original_owner_name:  folder.originalOwnerName || null,
@@ -2623,8 +2649,22 @@ function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoo
 // Moderator-side control for the audience song-request feature. Lazily
 // creates a stable request_token on first open (persisted immediately so the
 // link never changes on subsequent opens), then shows it for copy/share.
-function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken }) {
+function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken, onPersistRequestCaps }) {
   const [requestUrl, setRequestUrl] = React.useState("Generating link…");
+  const [totalCapInput,  setTotalCapInput]  = React.useState(folder.requestCap ?? "");
+  const [personalCapInput, setPersonalCapInput] = React.useState(folder.requestCapPerUser ?? "");
+  const [savingCaps, setSavingCaps] = React.useState(false);
+
+  const saveCaps = async () => {
+    setSavingCaps(true);
+    const toNum = v => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : null; };
+    try {
+      await onPersistRequestCaps(folder.id, { requestCap: toNum(totalCapInput), requestCapPerUser: toNum(personalCapInput) });
+      showToast("Limits saved");
+    } finally {
+      setSavingCaps(false);
+    }
+  };
 
   React.useEffect(() => {
     let alive = true;
@@ -2695,6 +2735,33 @@ function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken })
         <p className="text-xs text-gray-600 mt-4 leading-relaxed">
           Songs requested through this link land straight in the queue — reopen the session panel to see new arrivals.
         </p>
+
+        {onPersistRequestCaps && (
+          <div className="mt-4 pt-4 border-t border-[#2e2e44]">
+            <div className="text-xs text-gray-400 font-medium mb-2">Limits (optional)</div>
+            <div className="flex gap-2 mb-2">
+              <div className="flex-1">
+                <label className="text-xs text-gray-600 block mb-1">Total songs</label>
+                <input type="number" min="1" inputMode="numeric" value={totalCapInput}
+                  onChange={e=>setTotalCapInput(e.target.value)} placeholder="No limit"
+                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-gray-600 block mb-1">Per person</label>
+                <input type="number" min="1" inputMode="numeric" value={personalCapInput}
+                  onChange={e=>setPersonalCapInput(e.target.value)} placeholder="No limit"
+                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+              </div>
+            </div>
+            <button onClick={saveCaps} disabled={savingCaps}
+              className="w-full py-2 rounded-lg text-xs font-semibold border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-50">
+              {savingCaps ? "Saving…" : "Save Limits"}
+            </button>
+            <p className="text-xs text-gray-600 mt-2 leading-relaxed">
+              "Per person" is a soft nudge, not a hard lock — anyone can get around it by switching browsers, since there's no login on this page. Leave either blank for no limit. Raising a limit (or removing a song) frees up room immediately.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3971,7 +4038,7 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
 function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
   broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount,
-  showToast, onPersistRequestToken, onRefresh}) {
+  showToast, onPersistRequestToken, onPersistRequestCaps, onRefresh}) {
   const [showRequestLink, setShowRequestLink] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const doRefresh = async () => {
@@ -4085,7 +4152,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
       </div>
       {showRequestLink && (
         <RequestLinkModal folder={folder} onClose={()=>setShowRequestLink(false)}
-          showToast={showToast} onPersistRequestToken={onPersistRequestToken}/>
+          showToast={showToast} onPersistRequestToken={onPersistRequestToken} onPersistRequestCaps={onPersistRequestCaps}/>
       )}
     </div>
   );
@@ -4662,6 +4729,14 @@ function RequestSongPage({ token }) {
   // token so voting on one session's link doesn't bleed into another's.
   const votedKey = `jb_voted_${token}`;
   const [votedIds, setVotedIds]     = React.useState(() => new Set(LS.get(votedKey, [])));
+  // A random id for this device, reused forever once generated — not tied
+  // to any personal info, just enough to let the (soft) per-person request
+  // cap count "songs from this browser" within whichever session it's used on.
+  const [requesterId] = React.useState(() => {
+    let id = LS.get("jb_requester_id", null);
+    if (!id) { id = window.crypto?.randomUUID?.() || (Date.now() + "-" + Math.random().toString(36).slice(2, 10)); LS.set("jb_requester_id", id); }
+    return id;
+  });
   const [toast, showToast]          = useToast();
 
   const { results, loading, artistNotFound, catalogError, artistActive,
@@ -4702,13 +4777,25 @@ function RequestSongPage({ token }) {
   const queuedKeys    = React.useMemo(() => new Set((folder?.songs || []).map(songMatchKey)), [folder]);
   const completedKeys = React.useMemo(() => new Set((folder?.songs || []).filter(s => s.completed).map(songMatchKey)), [folder]);
 
+  const totalRequested   = folder?.songs?.length || 0;
+  const totalCap         = folder?.requestCap ?? null;
+  const capReached       = totalCap != null && totalRequested >= totalCap;
+  const myRequestedCount = folder?.songs?.filter(s => s.requestedBy === requesterId).length || 0;
+  const personalCap      = folder?.requestCapPerUser ?? null;
+  const personalCapReached = personalCap != null && myRequestedCount >= personalCap;
+
   const handleAdd = async (song) => {
     if (queuedKeys.has(songMatchKey(song))) {
       showToast(`"${song.title}" is already in the queue`);
       return;
     }
+    // Quick client-side check for instant feedback — addSongViaRequestToken
+    // re-checks against the live count regardless, so this is just to avoid
+    // a round trip for the common case of an already-known-full session.
+    if (capReached) { showToast(`This session has reached its ${totalCap}-song limit.`); return; }
+    if (personalCapReached) { showToast(`You've reached your limit of ${personalCap} song${personalCap===1?"":"s"}.`); return; }
     setAddingId(song.id);
-    const res = await addSongViaRequestToken(token, song);
+    const res = await addSongViaRequestToken(token, song, requesterId);
     setAddingId(null);
     if (res.ok) {
       setAddedIds(prev => new Set(prev).add(song.id));
@@ -4852,9 +4939,11 @@ function RequestSongPage({ token }) {
                           <div className="text-xs text-gray-400 truncate">{song.artist} · {song.album}</div>
                         </div>
                       </div>
-                      <button onClick={()=>handleAdd(song)} disabled={completed || added || addingId === song.id}
+                      <button onClick={()=>handleAdd(song)}
+                        disabled={completed || added || addingId === song.id || capReached || personalCapReached}
+                        title={!completed && !added && capReached ? "This session has reached its song limit" : !completed && !added && personalCapReached ? "You've reached your personal request limit" : undefined}
                         className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${completed ? "bg-gray-700/30 text-gray-400 border border-gray-600/40" : added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
-                        {completed ? "✓ Completed" : added ? "✓ Added" : addingId === song.id ? "…" : "➕ Add"}
+                        {completed ? "✓ Completed" : added ? "✓ Added" : addingId === song.id ? "…" : (capReached || personalCapReached) ? "🚫 Full" : "➕ Add"}
                       </button>
                     </div>
                   );
@@ -4885,9 +4974,15 @@ function RequestSongPage({ token }) {
 
           {/* ── Right: in queue ──────────────────────────────────────── */}
           <div className="md:flex-1 md:min-h-0 md:min-w-0 flex flex-col md:border-l md:border-[#1e1e2e] md:pl-6">
-            <h2 className="text-sm font-semibold text-gray-300 mb-2 text-center md:text-left flex-shrink-0">
-              📋 In Queue {folder.songs?.length ? `(${folder.songs.length})` : ""}
+            <h2 className="text-sm font-semibold text-gray-300 mb-1 text-center md:text-left flex-shrink-0">
+              📋 In Queue {totalCap != null ? `(${totalRequested}/${totalCap})` : folder.songs?.length ? `(${folder.songs.length})` : ""}
             </h2>
+            {(totalCap != null || personalCap != null) && (
+              <p className="text-xs text-gray-600 mb-2 text-center md:text-left flex-shrink-0">
+                {capReached && "This session's song limit has been reached. "}
+                {personalCap != null && `You've requested ${myRequestedCount}${personalCap!=null?`/${personalCap}`:""}. `}
+              </p>
+            )}
             <div className="md:flex-1 md:min-h-0 md:overflow-y-auto md:pr-1">
               {(!folder.songs || folder.songs.length === 0) ? (
                 <p className="text-xs text-gray-600 text-center md:text-left py-4">No songs requested yet — be the first!</p>
@@ -5319,6 +5414,18 @@ function App() {
     } catch {}
   };
 
+  // Save the request-link caps (total / per-person, either nullable = no
+  // limit) set from RequestLinkModal.
+  const persistRequestCaps = async (fid, { requestCap, requestCapPerUser }) => {
+    const target = folders.find(f => f.id === fid);
+    if (!target) return;
+    setFolders(f => f.map(x => x.id === fid ? { ...x, requestCap, requestCapPerUser } : x));
+    try {
+      const updated = await db.mutateFolderSongs(user, { ...target, requestCap, requestCapPerUser }, songs => songs);
+      setFolders(f => f.map(x => x.id === fid ? updated : x));
+    } catch {}
+  };
+
   const selectFolder = id => { setActiveFolderId(id); setView("folder"); };
 
   // ─── Custom-lyrics state ──────────────────────────────────────────
@@ -5734,6 +5841,7 @@ function App() {
             viewerCount={viewerCount}
             showToast={showToast}
             onPersistRequestToken={persistRequestToken}
+            onPersistRequestCaps={persistRequestCaps}
           />
         )}
       </main>
