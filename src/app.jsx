@@ -3137,6 +3137,13 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [googleRoman,setGoogleRoman]= React.useState(null);
   const [preferLocal, setPreferLocal] = React.useState(false);
   const [romanizing, setRomanizing] = React.useState(false);
+  // Off by default — explicit section markers already present in the
+  // source (Chorus/Verse/Male Part/etc.) always still show as tags either
+  // way. This only controls the *heuristic* guessing (repeated stanza →
+  // Chorus, everything else → numbered Verses) for stanzas that have no
+  // marker at all — most people would rather see plain lyrics than have
+  // that guess stamped on every line.
+  const [autoSection, setAutoSection] = React.useState(false);
   const scrollRef = React.useRef(null);
 
   const hasCustomLyrics = !!(song.customLyrics || song.customLyricsRoman);
@@ -3227,7 +3234,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   }, [lyricsData, script, nativeScript, preRomanized, googleRoman, preferLocal, song.customLyricsRoman]);
 
   const stanzas = displayText
-    ? parseStructured(displayText, { skipAutoNumber: !!lyricsData?.structured })
+    ? parseStructured(displayText, { skipAutoNumber: !autoSection })
     : [];
 
   const isMobile = useIsMobile();
@@ -3335,6 +3342,14 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                         {switching && <div className="text-xs text-gray-500 flex items-center gap-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>Switching…</div>}
                       </div>
                     )}
+
+                    {/* Auto-tag toggle — off by default; explicit markers already
+                        in the lyrics (Chorus/Verse/Male Part/etc.) always show
+                        regardless, this only adds the guessed ones. */}
+                    <label className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/15 cursor-pointer border-b border-[#2e2e44]">
+                      <input type="checkbox" checked={autoSection} onChange={e=>setAutoSection(e.target.checked)} className="accent-violet-600"/>
+                      🏷️ Guess section tags
+                    </label>
 
                     {/* Edit Lyrics — hidden for followers of an active broadcast */}
                     {onEditSong && !(broadcastModerator && !isBroadcasting) && (
