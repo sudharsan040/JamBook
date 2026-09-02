@@ -1158,11 +1158,20 @@ function transliterateToRoman(text) {
 }
 
 // ── Detect section headers ([Verse], [Chorus], [Male], etc.) ─────────
+// Some sources (esp. what's ended up archived in song_archive) write these
+// as "Male Part" / "Female Voice" rather than the bare word — without the
+// optional suffix below, a line like that fails to match, falls through as
+// a literal lyric line, and — because that same label text then repeats
+// once per section throughout the song — trips the "repeated line = Chorus"
+// heuristic in parseStructured, producing a bogus Chorus tag right before
+// every occurrence. Recognizing the fuller phrasing here fixes both: the
+// label renders as a proper tag, and it's no longer in the repeat count.
+const SEC_SUFFIX = "(?:\\s+(?:part|section|voice|portion))?";
 const SECTION_PATTERNS = [
-  { re: /^\[?\s*(male|man|boy)[\s:\]]*$/i,           tag: "male",    label: "Male" },
-  { re: /^\[?\s*(female|woman|girl|lady)[\s:\]]*$/i, tag: "female",  label: "Female" },
-  { re: /^\[?\s*(chorus|hook|refrain)[\s\d:\]]*$/i,  tag: "chorus",  label: "Chorus" },
-  { re: /^\[?\s*(duet|both)[\s:\]]*$/i,              tag: "duet",    label: "Duet" },
+  { re: new RegExp(`^\\[?\\s*(male|man|boy)${SEC_SUFFIX}[\\s:\\]]*$`, "i"),           tag: "male",    label: "Male" },
+  { re: new RegExp(`^\\[?\\s*(female|woman|girl|lady)${SEC_SUFFIX}[\\s:\\]]*$`, "i"), tag: "female",  label: "Female" },
+  { re: new RegExp(`^\\[?\\s*(chorus|hook|refrain)${SEC_SUFFIX}[\\s\\d:\\]]*$`, "i"),  tag: "chorus",  label: "Chorus" },
+  { re: new RegExp(`^\\[?\\s*(duet|both)${SEC_SUFFIX}[\\s:\\]]*$`, "i"),              tag: "duet",    label: "Duet" },
   { re: /^\[?\s*(humming|hum+|aah+|ooh+)[\s:\]]*$/i, tag: "humming", label: "Humming" },
   { re: /^\[?\s*(verse|stanza)[\s\d:\]]*$/i,         tag: "verse",   label: "Verse" },
   { re: /^\[?\s*(pre-?chorus)[\s\d:\]]*$/i,          tag: "chorus",  label: "Pre-Chorus" },
