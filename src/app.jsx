@@ -688,12 +688,22 @@ function normalizeForMatch(s) {
   return (s || "").toLowerCase().replace(/[^a-z0-9ऀ-ൿ\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 function tokenOverlapScore(a, b) {
-  const ta = new Set(normalizeForMatch(a).split(" ").filter(t => t.length >= 2));
-  const tb = new Set(normalizeForMatch(b).split(" ").filter(t => t.length >= 2));
-  if (!ta.size || !tb.size) return 0;
+  const ta = [...new Set(normalizeForMatch(a).split(" ").filter(t => t.length >= 2))];
+  const tb = [...new Set(normalizeForMatch(b).split(" ").filter(t => t.length >= 2))];
+  if (!ta.length || !tb.length) return 0;
   let hits = 0;
-  for (const t of ta) if (tb.has(t)) hits++;
-  return hits / Math.min(ta.size, tb.size);
+  for (const t of ta) {
+    if (tb.includes(t)) { hits++; continue; }
+    // Fuzzy fallback for transliteration spelling variance between sources
+    // — same word, different vowel doubling/spelling (e.g. "Kuluvalilae" vs
+    // tamil2lyrics' own "Kuluvaalilae"). A shared long-enough prefix is a
+    // strong enough signal on its own without risking a false positive on
+    // short/common words.
+    if (t.length >= 5 && tb.some(u => u.length >= 5 && (u.startsWith(t.slice(0, 5)) || t.startsWith(u.slice(0, 5))))) {
+      hits++;
+    }
+  }
+  return hits / Math.min(ta.length, tb.length);
 }
 // `expected` = what we searched for ({title, artist, album}); `got` = what a
 // source handed back. Fails open (returns true) whenever a source doesn't
@@ -701,7 +711,11 @@ function tokenOverlapScore(a, b) {
 // signal it's the wrong song.
 function isPlausibleLyricsMatch(expected, got) {
   if (!got.title) return true;
-  const titleScore = tokenOverlapScore(expected.title, got.title);
+  // Strip "(From "Movie")" / "(feat. X)" / version suffixes before scoring —
+  // otherwise words like "from" and the movie name (which the actual lyrics
+  // page's title usually doesn't repeat) drag the overlap score down for no
+  // real reason.
+  const titleScore = tokenOverlapScore(normalizeTitle(expected.title || ""), got.title);
   if (titleScore < 0.5) return false;
   // An identical/near-identical title is exactly the scenario where two
   // different movies can share a song name — lean on album (movie) first,
