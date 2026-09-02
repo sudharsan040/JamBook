@@ -1354,8 +1354,12 @@ function _t2lParsePage(pageHtml) {
     .replace(/[ \t]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // Filter out ad-script leftovers, metadata, and section labels from each line
-  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?|A[-+−–—]\s*$|Copy\s*$|Print\s*$|Share\s*$|Save\s*$|Bookmark\s*$|Font\s*Size\s*$|Increase\s*Font|Decrease\s*Font|Toggle\s*Font|Click\s*here|Read\s*more|Show\s*more|Show\s*less|(?:Male|Female|Duet|Both|Chorus|Verse|Pre[- ]?Chorus|Bridge|Intro|Outro)\s+Part\s*$)/i;
+  // Filter out ad-script leftovers and page metadata from each line. Does
+  // NOT touch section labels like "Male Part"/"Chorus"/"Verse" — those used
+  // to be stripped here as "noise" too, which is exactly why they never
+  // showed up even on a fresh fetch; they're real structure the source
+  // provides and parseStructured now handles recognizing them properly.
+  const NOISE_LINE_RE = /^\s*(?:\(?adsbygoogle|window\.adsbygoogle|googletag|google_ad_|enable_page_level|English|Tanglish|Romanized|Translation|தமிழ்|Lyrics?\s*:?\s*$|Music\s*by\s*:?|Singer\s*:?|Lyricist\s*:?|Lyrics\s*by\s*:?|Whistling\s*:?|Year\s*:?|Movie\s*:?|Director\s*:?|Producer\s*:?|Cast\s*:?|Composer\s*:?|A[-+−–—]\s*$|Copy\s*$|Print\s*$|Share\s*$|Save\s*$|Bookmark\s*$|Font\s*Size\s*$|Increase\s*Font|Decrease\s*Font|Toggle\s*Font|Click\s*here|Read\s*more|Show\s*more|Show\s*less)/i;
   // Boilerplate phrases that appear ANYWHERE in a line — kill the whole line
   const NOISE_CONTAINS_RE = /Song\s+Lyrics\s+from|Tamil\s+film\s+starring|in\s+a\s+lead\s+role|song\s+was\s+sung\s+by|music\s+is\s+composed\s+by|Lyrics\s+works?\s+are\s+penned|penned\s+by\s+lyricist|Lyrics?\s+penned\s+by|directed\s+by|produced\s+by|released\s+in\s+\d{4}|adsbygoogle|googletag|window\.googletag|©\s*\d{4}|All\s+rights\s+reserved|tamil2lyrics\.com|Subscribe\s+to|Follow\s+us/i;
   const isMostlyTamil  = (line) => {
