@@ -2444,12 +2444,12 @@ function useToast() {
 
 // ─── Atoms ────────────────────────────────────────────────────────────
 function Tag({type}) { const c=TAG_CONFIG[type]||TAG_CONFIG.chorus; return <span className={`chord-badge text-xs px-2 py-0.5 rounded-full font-semibold ${c.class}`}>{c.label}</span>; }
-function ChordBadge({chord}) { return <span className="chord-badge text-xs font-bold text-violet-400 bg-violet-900/30 border border-violet-700/40 px-2 py-0.5 rounded mr-1">{chord}</span>; }
+function ChordBadge({chord}) { return <span className="chord-badge text-xs font-bold text-amber-400 bg-amber-900/30 border border-amber-700/40 px-2 py-0.5 rounded mr-1">{chord}</span>; }
 function Avatar({username,size=36}) {
   return <div className="avatar" style={{background:avatarColor(username),width:size,height:size,fontSize:size*.38}}>{username.charAt(0).toUpperCase()}</div>;
 }
 function Spinner() {
-  return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>;
+  return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>;
 }
 
 // Full-screen splash shown while a ?share= link resolves — logo, tagline,
@@ -2527,7 +2527,7 @@ function AuthPage({onLogin}) {
         <div className="flex bg-[#0d0d18] rounded-xl p-1 mb-6">
           {["login","register"].map(m=>(
             <button key={m} onClick={()=>{setMode(m);setError("");}}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${mode===m?"bg-violet-600 text-white":"text-gray-400 hover:text-white"}`}>
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${mode===m?"bg-amber-600 text-white":"text-gray-400 hover:text-white"}`}>
               {m==="login"?"Sign In":"Create Account"}
             </button>
           ))}
@@ -2545,7 +2545,7 @@ function AuthPage({onLogin}) {
           </div>
           {error && <p className="text-red-400 text-xs">{error}</p>}
           <button type="submit" disabled={busy}
-            className={`w-full py-3 rounded-xl transition-all text-sm font-semibold text-white ${busy?"bg-violet-800 cursor-wait":"bg-violet-600 hover:bg-violet-700"}`}>
+            className={`w-full py-3 rounded-xl transition-all text-sm font-semibold text-white ${busy?"bg-amber-800 cursor-wait":"bg-amber-600 hover:bg-amber-700"}`}>
             {busy ? (mode==="login"?"Signing in…":"Creating account…") : (mode==="login"?"Sign In →":"Create Account →")}
           </button>
           {HAS_SUPABASE && <p className="text-xs text-gray-600 text-center mt-3">☁️ Synced via Supabase — sign in from any device</p>}
@@ -2608,11 +2608,11 @@ function SettingsModal({ onClose, showToast }) {
           <div className="space-y-2">
             {sources.map(s => (
               <label key={s.value}
-                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${settings.lyricsSource === s.value ? "border-violet-500 bg-violet-600/10" : "border-[#2e2e44] hover:border-gray-500"}`}>
+                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${settings.lyricsSource === s.value ? "border-amber-500 bg-amber-600/10" : "border-[#2e2e44] hover:border-gray-500"}`}>
                 <input type="radio" name="lyricsSource" value={s.value}
                   checked={settings.lyricsSource === s.value}
                   onChange={() => update({ lyricsSource: s.value })}
-                  className="mt-1 accent-violet-500" />
+                  className="mt-1 accent-amber-500" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-white font-medium">{s.label}</div>
                   <div className="text-xs text-gray-500 mt-0.5">{s.hint}</div>
@@ -2630,7 +2630,7 @@ function SettingsModal({ onClose, showToast }) {
           <div className="mt-5 pt-4 border-t border-[#2a2a3e]">
             <label className="text-xs text-gray-400 font-medium block mb-2">Song archive</label>
             <button onClick={uploadArchive} disabled={uploading}
-              className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+              className="w-full text-sm px-3 py-2.5 rounded-xl border border-[#2e2e44] text-gray-300 hover:border-amber-500/50 hover:text-amber-300 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed">
               {uploading ? "Uploading…" : "⬆ Upload"}
             </button>
             <p className="text-xs text-gray-600 mt-2 text-center">
@@ -2691,7 +2691,7 @@ function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoo
           <h3 className="text-base font-bold text-white">Share Folder</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
         </div>
-        <p className="text-sm text-gray-400 mb-1">Folder: <span className="text-violet-300 font-medium">{folder.name}</span></p>
+        <p className="text-sm text-gray-400 mb-1">Folder: <span className="text-amber-300 font-medium">{folder.name}</span></p>
         <p className="text-xs text-gray-600 mb-5">{folderSongs?.length || 0} songs · owned by {user.username}</p>
 
         <p className="text-xs text-gray-500 mb-2">Anyone with this link can import your folder</p>
@@ -2700,17 +2700,17 @@ function ShareModal({folder, user, onClose, showToast, folderSongs, onPersistRoo
           value={shareUrl}
           onFocus={e => e.target.select()}
           rows={3}
-          className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-xl px-3 py-2 text-violet-300 text-xs font-mono mb-3 resize-none break-all"
+          className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-xl px-3 py-2 text-amber-300 text-xs font-mono mb-3 resize-none break-all"
         />
 
         <div className="flex gap-2">
           <button onClick={copy}
-            className="flex-1 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+            className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold transition-all">
             📋 Copy Link
           </button>
           {typeof navigator !== "undefined" && navigator.share && (
             <button onClick={shareNative}
-              className="flex-1 py-2.5 border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 rounded-xl text-sm font-semibold transition-all">
+              className="flex-1 py-2.5 border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 rounded-xl text-sm font-semibold transition-all">
               ↗ Share
             </button>
           )}
@@ -2786,7 +2786,7 @@ function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken, o
           <h3 className="text-base font-bold text-white">🎤 Audience Request Link</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
         </div>
-        <p className="text-sm text-gray-400 mb-1">Folder: <span className="text-violet-300 font-medium">{folder.name}</span></p>
+        <p className="text-sm text-gray-400 mb-1">Folder: <span className="text-amber-300 font-medium">{folder.name}</span></p>
         <p className="text-xs text-gray-600 mb-5">Anyone with this link can search and add songs straight to this folder — no account needed. The link stays the same every time.</p>
 
         <textarea
@@ -2794,17 +2794,17 @@ function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken, o
           value={requestUrl}
           onFocus={e => e.target.select()}
           rows={3}
-          className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-xl px-3 py-2 text-violet-300 text-xs font-mono mb-3 resize-none break-all"
+          className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-xl px-3 py-2 text-amber-300 text-xs font-mono mb-3 resize-none break-all"
         />
 
         <div className="flex gap-2">
           <button onClick={copy}
-            className="flex-1 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+            className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold transition-all">
             📋 Copy Link
           </button>
           {typeof navigator !== "undefined" && navigator.share && (
             <button onClick={shareNative}
-              className="flex-1 py-2.5 border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 rounded-xl text-sm font-semibold transition-all">
+              className="flex-1 py-2.5 border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 rounded-xl text-sm font-semibold transition-all">
               ↗ Share
             </button>
           )}
@@ -2822,17 +2822,17 @@ function RequestLinkModal({ folder, onClose, showToast, onPersistRequestToken, o
                 <label className="text-xs text-gray-600 block mb-1">Total songs</label>
                 <input type="number" min="1" inputMode="numeric" value={totalCapInput}
                   onChange={e=>setTotalCapInput(e.target.value)} placeholder="No limit"
-                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:border-amber-500 focus:outline-none"/>
               </div>
               <div className="flex-1">
                 <label className="text-xs text-gray-600 block mb-1">Per person</label>
                 <input type="number" min="1" inputMode="numeric" value={personalCapInput}
                   onChange={e=>setPersonalCapInput(e.target.value)} placeholder="No limit"
-                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-2.5 py-1.5 text-sm text-white placeholder-gray-600 focus:border-amber-500 focus:outline-none"/>
               </div>
             </div>
             <button onClick={saveCaps} disabled={savingCaps}
-              className="w-full py-2 rounded-lg text-xs font-semibold border border-[#2e2e44] text-gray-300 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-50">
+              className="w-full py-2 rounded-lg text-xs font-semibold border border-[#2e2e44] text-gray-300 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-50">
               {savingCaps ? "Saving…" : "Save Limits"}
             </button>
             <p className="text-xs text-gray-600 mt-2 leading-relaxed">
@@ -2904,19 +2904,19 @@ function ImportModal({user, onImport, onClose, showToast, preloadedData}) {
         )}
 
         {data && (
-          <div className="bg-violet-600/10 border border-violet-600/30 rounded-xl p-4 mb-3">
+          <div className="bg-amber-600/10 border border-amber-600/30 rounded-xl p-4 mb-3">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-2xl">📁</span>
               <span className="text-base font-bold text-white">{data.folderName}</span>
             </div>
-            <p className="text-xs text-gray-400">Shared by <span className="text-violet-300">{data.ownerName}</span></p>
+            <p className="text-xs text-gray-400">Shared by <span className="text-amber-300">{data.ownerName}</span></p>
             <p className="text-xs text-gray-500 mt-1">{data.songs?.length || 0} song{(data.songs?.length||0)!==1?"s":""}</p>
           </div>
         )}
 
         {err && <p className="text-red-400 text-xs mb-3">{err}</p>}
         <button onClick={doImport} disabled={!data}
-          className={`w-full py-3 rounded-xl text-sm font-semibold transition-all mt-1 ${data?"bg-violet-600 hover:bg-violet-700 text-white":"bg-[#2a2a3e] text-gray-600 cursor-not-allowed"}`}>
+          className={`w-full py-3 rounded-xl text-sm font-semibold transition-all mt-1 ${data?"bg-amber-600 hover:bg-amber-700 text-white":"bg-[#2a2a3e] text-gray-600 cursor-not-allowed"}`}>
           Import Folder
         </button>
       </div>
@@ -2959,19 +2959,19 @@ function AutoScrollControl({scrollRef}) {
   React.useEffect(()=>{ if(on) start(speed); else stop(); return stop; },[on,speed]);
 
   return (
-    <div className={`flex items-center gap-1 sm:gap-2 bg-[#1a1a2e] border rounded-xl px-2 sm:px-3 py-1.5 sm:py-2 ${on?"border-violet-500 scroll-active":"border-[#2e2e44]"}`}>
+    <div className={`flex items-center gap-1 sm:gap-2 bg-[#1a1a2e] border rounded-xl px-2 sm:px-3 py-1.5 sm:py-2 ${on?"border-amber-500 scroll-active":"border-[#2e2e44]"}`}>
       <span className="text-xs text-gray-400 font-medium hidden sm:inline">Auto-Scroll</span>
       <div className="flex gap-0.5 sm:gap-1">
         {SCROLL_SPEEDS.map(s=>(
           <button key={s.key} onClick={()=>setSpeed(s.key)} title={s.label}
-            className={`speed-btn text-xs px-1.5 sm:px-2 py-1 rounded-md sm:rounded-lg border font-medium transition-all ${speed===s.key?"active border-violet-600":"border-[#2e2e44] text-gray-400 hover:border-gray-500"}`}>
+            className={`speed-btn text-xs px-1.5 sm:px-2 py-1 rounded-md sm:rounded-lg border font-medium transition-all ${speed===s.key?"active border-amber-600":"border-[#2e2e44] text-gray-400 hover:border-gray-500"}`}>
             <span className="sm:hidden">{s.label[0]}</span>
             <span className="hidden sm:inline">{s.label}</span>
           </button>
         ))}
       </div>
       <button onClick={()=>setOn(v=>!v)} title={on?"Stop":"Start"}
-        className={`ml-0.5 sm:ml-1 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md sm:rounded-lg text-xs font-semibold transition-all text-white ${on?"bg-red-600 hover:bg-red-700":"bg-violet-600 hover:bg-violet-700"}`}>
+        className={`ml-0.5 sm:ml-1 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md sm:rounded-lg text-xs font-semibold transition-all text-white ${on?"bg-red-600 hover:bg-red-700":"bg-amber-600 hover:bg-amber-700"}`}>
         {on?"⏹":"▶"}<span className="hidden sm:inline">{on?" Stop":" Start"}</span>
       </button>
     </div>
@@ -3022,12 +3022,12 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
   return (
     <div onClick={() => onOpenSong(song)}
       className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${isActive ? "queue-song-active" : "border-[#1e1e2e] hover:bg-[#1a1a2e]"} ${song.completed ? "opacity-50" : ""}`}>
-      {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-violet-500 rounded-r-full"/>}
+      {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full"/>}
       <div className="flex items-start justify-between gap-2 pl-1">
         <div className="flex items-start gap-2 min-w-0">
-          <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive ? "text-violet-400" : "text-gray-700"}`}>{i + 1}</span>
+          <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive ? "text-amber-400" : "text-gray-700"}`}>{i + 1}</span>
           <div className="min-w-0">
-            <div className={`text-xs font-semibold leading-tight truncate ${song.completed ? "line-through" : ""} ${isActive ? "text-violet-200" : "text-gray-300"}`}>{song.title}</div>
+            <div className={`text-xs font-semibold leading-tight truncate ${song.completed ? "line-through" : ""} ${isActive ? "text-amber-200" : "text-gray-300"}`}>{song.title}</div>
             <div className="text-xs text-gray-600 truncate mt-0.5">{song.artist || song.singer}</div>
             <span className={`text-xs px-1.5 py-0.5 rounded-full mt-1 inline-block ${isActive ? "curated-badge" : "text-gray-600 bg-gray-800"}`}>
               {song.type === "curated" ? "⭐ Curated" : "🎵 Live"}
@@ -3074,7 +3074,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
   if (collapsed) return (
     <div className="sidebar-transition w-12 flex-shrink-0 bg-[#0d0d18] border-l border-[#1a1a2a] flex flex-col items-center py-3 gap-3">
       <button onClick={onToggleCollapse} title="Expand session queue"
-        className="text-gray-500 hover:text-violet-400 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">‹</button>
+        className="text-gray-500 hover:text-amber-400 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">‹</button>
       <div className="w-px h-4 bg-[#2a2a3a]"/>
       <div className="text-xs text-gray-600 [writing-mode:vertical-rl] rotate-180">{folder.name}</div>
     </div>
@@ -3088,7 +3088,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           <button onClick={onToggleCollapse} title="Collapse session queue"
             className="text-gray-600 hover:text-gray-300 text-xl w-6 h-6 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all flex-shrink-0 -mt-1">›</button>
         </div>
-        <div className="text-sm font-semibold text-violet-300 truncate">📁 {folder.name}</div>
+        <div className="text-sm font-semibold text-amber-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
 
         {/* Spin / Shuffle / Broadcast / Refresh — one strip, icon-only so all
@@ -3104,7 +3104,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           {onShuffleQueue && (
             <button onClick={()=>onShuffleQueue(folder.id)} disabled={pending.length<2}
               title={pending.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
-              className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
               🔀
             </button>
           )}
@@ -3117,7 +3117,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           )}
           {onRefreshQueue && (
             <button onClick={doRefresh} disabled={refreshing} title="Refresh — pick up songs added via a Request Songs link"
-              className={`flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
+              className={`flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
               🔄
             </button>
           )}
@@ -3126,7 +3126,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           <div className="mt-1.5 flex items-center gap-1.5">
             <span className="text-xs text-gray-600 flex-shrink-0">Sort:</span>
             <button onClick={()=>onSortQueue(folder.id, "alpha")} disabled={pending.length<2}
-              title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
               🔤 A–Z
             </button>
             <button onClick={()=>onSortQueue(folder.id, "votes")} disabled={pending.length<2}
@@ -3155,7 +3155,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
       <div className="px-3 py-2 border-b border-[#1a1a2a]">
         <input type="text" value={queueSearch} onChange={(e)=>setQueueSearch(e.target.value)}
           placeholder="🔍 Search by name or number"
-          className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+          className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-amber-500 focus:outline-none"/>
       </div>
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
         {visiblePending.map(({song,i})=>(
@@ -3201,7 +3201,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
       <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
         <div className="flex items-start justify-between px-5 pt-4 pb-3 border-b border-[#1e1e2e] flex-shrink-0">
           <div className="min-w-0 flex-1 mr-4">
-            <button onClick={onBack} className="text-violet-400 hover:text-violet-300 text-xs mb-1.5">← Back to Search</button>
+            <button onClick={onBack} className="text-amber-400 hover:text-amber-300 text-xs mb-1.5">← Back to Search</button>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold text-white">{script==="native"?song.titleNative:song.title}</h1>
               <span className="text-xs px-2 py-0.5 rounded-full font-semibold curated-badge">⭐ Curated</span>
@@ -3224,13 +3224,13 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
               <a href={torrinsLink(song.title)} target="_blank" rel="noopener"
                 className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-green-500 hover:text-green-400 transition-all">Torrins ↗</a>
               <div className="relative">
-                <button onClick={()=>setFolderMenu(v=>!v)} className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁 Add</button>
+                <button onClick={()=>setFolderMenu(v=>!v)} className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">📁 Add</button>
                 {showFolderMenu&&(
                   <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
                     {folders.length===0&&<div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
                     {folders.map(f=>(
                       <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setFolderMenu(false);}}
-                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 first:rounded-t-xl last:rounded-b-xl transition-all">
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 first:rounded-t-xl last:rounded-b-xl transition-all">
                         📁 {f.name}
                       </button>
                     ))}
@@ -3421,7 +3421,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           {/* Row 1: back + title (full width on mobile) */}
           <div className="flex items-center gap-2 min-w-0">
             <button onClick={onBack} title="Back"
-              className="text-violet-400 hover:text-violet-300 text-lg flex-shrink-0 px-1">←</button>
+              className="text-amber-400 hover:text-amber-300 text-lg flex-shrink-0 px-1">←</button>
             <div className="flex-1 min-w-0">
               <h1 className="text-sm sm:text-xl font-bold text-white truncate leading-tight flex items-center gap-1.5">
                 <span className="truncate">{song.title}</span>
@@ -3446,13 +3446,13 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <div className="relative">
                 <button onClick={()=>{setFolderMenu(v=>!v); setShowActionMenu(false);}}
                   title="Add to folder"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">📁<span className="hidden sm:inline ml-1">Add</span></button>
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">📁<span className="hidden sm:inline ml-1">Add</span></button>
                 {showFolderMenu && (
                   <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
                     {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
                     {folders.map(f=>(
                       <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setFolderMenu(false);}}
-                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 first:rounded-t-xl last:rounded-b-xl transition-all">
+                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 first:rounded-t-xl last:rounded-b-xl transition-all">
                         📁 {f.name}
                       </button>
                     ))}
@@ -3473,13 +3473,13 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               {activeFolder && onShareFolder && (
                 <button onClick={()=>onShareFolder(activeFolder)}
                   title="Share this folder"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">↗<span className="hidden sm:inline ml-1">Share</span></button>
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">↗<span className="hidden sm:inline ml-1">Share</span></button>
               )}
 
               {/* Session queue (mobile only) */}
               {isMobile && hasQueue && (
                 <button onClick={()=>setShowQueue(true)} title="Session queue"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all">
+                  className="text-xs px-2 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
                   ☰ {folderSongs.length}
                 </button>
               )}
@@ -3488,33 +3488,33 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <div className="relative">
                 <button onClick={()=>{setShowActionMenu(v=>!v); setFolderMenu(false);}}
                   title="More actions"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500 hover:text-violet-400 transition-all">⋮</button>
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">⋮</button>
                 {showActionMenu && (
                   <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-56 overflow-hidden">
                     {/* Source switcher — hidden for followers of an active broadcast */}
                     {lyricsData?.source && !(broadcastModerator && !isBroadcasting) && (
                       <div className="px-4 py-2 border-b border-[#2e2e44]">
                         <div className="text-xs text-gray-500 mb-1.5">Source</div>
-                        <div className="text-xs text-violet-300 font-medium mb-2">✓ {lyricsData.source}</div>
+                        <div className="text-xs text-amber-300 font-medium mb-2">✓ {lyricsData.source}</div>
                         {!switching && otherSources.length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {otherSources.map(src => (
                               <button key={src} onClick={()=>{switchSource(src);setShowActionMenu(false);}}
-                                className="text-xs px-2 py-1 rounded-md border border-[#2e2e44] text-gray-400 hover:text-violet-300 hover:border-violet-500 transition-all">
+                                className="text-xs px-2 py-1 rounded-md border border-[#2e2e44] text-gray-400 hover:text-amber-300 hover:border-amber-500 transition-all">
                                 Try {src}
                               </button>
                             ))}
                           </div>
                         )}
-                        {switching && <div className="text-xs text-gray-500 flex items-center gap-1"><div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>Switching…</div>}
+                        {switching && <div className="text-xs text-gray-500 flex items-center gap-1"><div className="w-3 h-3 border border-amber-500 border-t-transparent rounded-full animate-spin"/>Switching…</div>}
                       </div>
                     )}
 
                     {/* Auto-tag toggle — off by default; explicit markers already
                         in the lyrics (Chorus/Verse/Male Part/etc.) always show
                         regardless, this only adds the guessed ones. */}
-                    <label className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/15 cursor-pointer border-b border-[#2e2e44]">
-                      <input type="checkbox" checked={autoSection} onChange={e=>setAutoSection(e.target.checked)} className="accent-violet-600"/>
+                    <label className="flex items-center gap-2 px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/15 cursor-pointer border-b border-[#2e2e44]">
+                      <input type="checkbox" checked={autoSection} onChange={e=>setAutoSection(e.target.checked)} className="accent-amber-600"/>
                       🏷️ Guess section tags
                     </label>
 
@@ -3585,7 +3585,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                     setLoading(false);
                   });
                 }}
-                className="px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+                className="px-6 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold transition-all">
                 ↺ Try Again
               </button>
             </div>
@@ -3640,7 +3640,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <div className="flex items-center justify-between px-4 py-3 border-b border-[#1a1a2a] flex-shrink-0">
               <div>
                 <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Session Queue</div>
-                <div className="text-sm font-semibold text-violet-300 truncate">📁 {activeFolder.name}</div>
+                <div className="text-sm font-semibold text-amber-300 truncate">📁 {activeFolder.name}</div>
               </div>
               <button onClick={()=>setShowQueue(false)} className="text-gray-500 hover:text-white text-xl">✕</button>
             </div>
@@ -3656,7 +3656,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 {onShuffleQueue && (
                   <button onClick={()=>onShuffleQueue(activeFolder.id)} disabled={pendingQueueSongs.length<2}
                     title={pendingQueueSongs.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
-                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     🔀
                   </button>
                 )}
@@ -3670,7 +3670,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 {onRefreshQueue && (
                   <button onClick={()=>onRefreshQueue(activeFolder.id)}
                     title="Refresh — pick up songs added via a Request Songs link"
-                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all">
+                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
                     🔄
                   </button>
                 )}
@@ -3679,7 +3679,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 <div className="mt-1.5 flex items-center gap-1.5">
                   <span className="text-xs text-gray-600 flex-shrink-0">Sort:</span>
                   <button onClick={()=>onSortQueue(activeFolder.id, "alpha")} disabled={pendingQueueSongs.length<2}
-                    title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     🔤 A–Z
                   </button>
                   <button onClick={()=>onSortQueue(activeFolder.id, "votes")} disabled={pendingQueueSongs.length<2}
@@ -3704,7 +3704,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
               <input type="text" value={queueSearch} onChange={(e)=>setQueueSearch(e.target.value)}
                 placeholder="🔍 Search by name or number"
-                className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-violet-500 focus:outline-none"/>
+                className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-amber-500 focus:outline-none"/>
             </div>
             <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
               {(() => {
@@ -3716,9 +3716,9 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                     className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${s.id===song.id?"queue-song-active":"border-[#1e1e2e]"} ${s.completed?"opacity-50":""}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2 min-w-0">
-                        <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${s.id===song.id?"text-violet-400":"text-gray-700"}`}>{i+1}</span>
+                        <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${s.id===song.id?"text-amber-400":"text-gray-700"}`}>{i+1}</span>
                         <div className="min-w-0 flex-1">
-                          <div className={`text-sm font-semibold leading-tight truncate ${s.completed?"line-through":""} ${s.id===song.id?"text-violet-200":"text-gray-300"}`}>{s.title}</div>
+                          <div className={`text-sm font-semibold leading-tight truncate ${s.completed?"line-through":""} ${s.id===song.id?"text-amber-200":"text-gray-300"}`}>{s.title}</div>
                           <div className="text-xs text-gray-600 truncate mt-0.5">
                             {s.artist || s.singer}
                             {s.votes > 0 && <span className="text-pink-400 ml-1.5">❤️ {s.votes}</span>}
@@ -3889,7 +3889,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
             <span className="text-xs text-gray-600 self-center mr-1">Insert:</span>
             {["[Verse]","[Chorus]","[Male]","[Female]","[Duet]","[Humming]","[Bridge]"].map(m => (
               <button key={m} type="button" onClick={()=>insertAtCursor(m)}
-                className="text-xs px-2 py-0.5 rounded-md border border-[#2a2a3e] text-gray-400 hover:border-violet-500 hover:text-violet-400">
+                className="text-xs px-2 py-0.5 rounded-md border border-[#2a2a3e] text-gray-400 hover:border-amber-500 hover:text-amber-400">
                 {m}
               </button>
             ))}
@@ -3905,7 +3905,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
                 {scriptTab === "roman" && nativeLyrics.trim() && (
                   <button type="button" onClick={autoFillTanglish} disabled={autoFillBusy}
                     title="Auto-fill from native lyrics (Google romanization for any Indic script)"
-                    className="text-xs text-violet-400 hover:text-violet-300 underline-offset-2 hover:underline disabled:opacity-50 disabled:cursor-wait">
+                    className="text-xs text-amber-400 hover:text-amber-300 underline-offset-2 hover:underline disabled:opacity-50 disabled:cursor-wait">
                     {autoFillBusy ? "Translating…" : "↻ Auto-fill"}
                   </button>
                 )}
@@ -3928,14 +3928,14 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
                 ? `Paste native-script lyrics here...\n\nTip:\n[Chorus]   ← marks a section\n[Male]     ← Male singer\nC  G  Am   ← chord line`
                 : `Paste Tanglish / Roman lyrics here...\n\nUse the ↻ Auto-fill button to convert from native automatically.`} />
             <p className="text-xs text-gray-600 mt-1">
-              You can fill either or both. Markers like <code className="text-violet-400">[Chorus]</code> add vocal tags. Lines with only chord letters (<code className="text-violet-400">C G Am F</code>) render as chord rows.
+              You can fill either or both. Markers like <code className="text-amber-400">[Chorus]</code> add vocal tags. Lines with only chord letters (<code className="text-amber-400">C G Am F</code>) render as chord rows.
             </p>
           </div>
 
           {err && <p className="text-red-400 text-xs">{err}</p>}
 
           <button onClick={save}
-            className="w-full py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-sm font-semibold transition-all">
+            className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold transition-all">
             {isEdit ? "Save Edits" : "Add Song"}
           </button>
         </div>
@@ -4067,19 +4067,19 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
                   </g>
                 );
               })}
-              <circle cx={cx} cy={cy} r="10" fill="#0d0d18" stroke="#7c3aed" strokeWidth="2"/>
+              <circle cx={cx} cy={cy} r="10" fill="#0d0d18" stroke="#d97706" strokeWidth="2"/>
             </svg>
           </div>
 
           {winner ? (
             <div className="mt-5 text-center">
               <div className="text-sm text-gray-400">🎉 Landed on</div>
-              <div className="text-lg font-bold text-violet-300">{winner.title}</div>
+              <div className="text-lg font-bold text-amber-300">{winner.title}</div>
               <div className="text-xs text-gray-500 mt-1">Opening lyrics…</div>
             </div>
           ) : (
             <button onClick={startSpin} disabled={!canSpin || spinning}
-              className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 transition-all">
+              className="mt-5 px-6 py-2.5 rounded-xl text-sm font-bold bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 transition-all">
               {spinning ? "Spinning…" : "🎲 Spin!"}
             </button>
           )}
@@ -4095,11 +4095,11 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
                       setNumberInputs(prev => prev.map((x, i) => i === idx ? v : x));
                     }}
                     placeholder="#"
-                    className="w-0 flex-1 min-w-0 text-center text-sm bg-[#1a1a2e] border border-[#2e2e44] rounded-lg py-2 text-gray-200 focus:border-violet-500 focus:outline-none"/>
+                    className="w-0 flex-1 min-w-0 text-center text-sm bg-[#1a1a2e] border border-[#2e2e44] rounded-lg py-2 text-gray-200 focus:border-amber-500 focus:outline-none"/>
                 ))}
               </div>
               <label className="flex items-center gap-2 text-xs text-gray-500 mb-2 cursor-pointer">
-                <input type="checkbox" checked={showNames} onChange={(e)=>setShowNames(e.target.checked)} className="accent-violet-600"/>
+                <input type="checkbox" checked={showNames} onChange={(e)=>setShowNames(e.target.checked)} className="accent-amber-600"/>
                 Show song names while spinning
               </label>
               <div className="text-xs text-gray-500">
@@ -4132,7 +4132,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} title="Back" className="text-violet-400 hover:text-violet-300 text-lg">←</button>
+          <button onClick={onBack} title="Back" className="text-amber-400 hover:text-amber-300 text-lg">←</button>
           <div className="min-w-0 flex-1">
             <h2 className="text-base sm:text-xl font-bold text-white truncate flex items-center gap-2">
               <span className="truncate">📁 {folder.name}</span>
@@ -4178,7 +4178,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
           {onRefresh && (
             <button onClick={doRefresh} disabled={refreshing}
               title="Refresh — pick up songs added via a Request Songs link"
-              className={`text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-violet-500/50 hover:text-violet-300 transition-all flex-shrink-0 disabled:opacity-50 ${refreshing?"animate-spin":""}`}>
+              className={`text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all flex-shrink-0 disabled:opacity-50 ${refreshing?"animate-spin":""}`}>
               🔄
             </button>
           )}
@@ -4193,7 +4193,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 
           <button onClick={onAddCustom}
             title="Add your own lyrics"
-            className="text-xs px-3 py-1.5 rounded-lg border border-violet-500/40 text-violet-400 hover:bg-violet-600/10 transition-all flex-shrink-0">
+            className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all flex-shrink-0">
             ＋ <span className="hidden sm:inline">Add</span> Lyrics
           </button>
         </div>
@@ -4202,17 +4202,17 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
         {songs.length===0&&(
           <div className="text-center py-16 text-gray-500">
             <div className="text-4xl mb-3">🎵</div>
-            <p>No songs yet. Search & add, or tap <span className="text-violet-400 font-semibold">+ Add Lyrics</span> to add your own.</p>
+            <p>No songs yet. Search & add, or tap <span className="text-amber-400 font-semibold">+ Add Lyrics</span> to add your own.</p>
           </div>
         )}
         {songs.map((song,i)=>(
-          <div key={song.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-violet-500/40 transition-all min-w-0">
+          <div key={song.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0">
             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
-              <span className="text-lg sm:text-xl font-bold text-violet-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
+              <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-white truncate text-sm sm:text-base">
                   {song.title}
-                  {song.type === "custom" && <span className="ml-1.5 text-xs text-violet-400">●</span>}
+                  {song.type === "custom" && <span className="ml-1.5 text-xs text-amber-400">●</span>}
                   {song.customLyrics && song.type !== "custom" && <span className="ml-1.5 text-xs text-amber-400">✎</span>}
                 </div>
                 <div className="text-xs text-gray-400 truncate">{song.artist||song.singer}</div>
@@ -4229,7 +4229,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
               )}
               {!(broadcastModerator && !isBroadcasting) && (
                 <button onClick={()=>onEditSong(song)} title="Edit lyrics"
-                  className="text-gray-600 hover:text-violet-400 text-sm px-1.5 transition-all">✎</button>
+                  className="text-gray-600 hover:text-amber-400 text-sm px-1.5 transition-all">✎</button>
               )}
               <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
                 className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
@@ -4302,13 +4302,13 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
   const addBtn = (song) => (
     <div className="relative">
       <button onClick={e=>{e.stopPropagation();setShowMenu(showMenu===song.id?null:song.id);setInlineNewFolder(null);}}
-        className="text-xs px-2 py-1.5 border border-[#2e2e44] hover:border-violet-500 text-gray-400 hover:text-violet-400 rounded-lg transition-all">📁</button>
+        className="text-xs px-2 py-1.5 border border-[#2e2e44] hover:border-amber-500 text-gray-400 hover:text-amber-400 rounded-lg transition-all">📁</button>
       {showMenu===song.id && (
         <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-48" onClick={e=>e.stopPropagation()}>
           {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
           {folders.map(f=>(
             <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setShowMenu(null);}}
-              className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 first:rounded-t-xl transition-all">
+              className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 first:rounded-t-xl transition-all">
               📁 {f.name}
             </button>
           ))}
@@ -4322,13 +4322,13 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                     if(e.key==="Escape") setInlineNewFolder(null);
                   }}
                   placeholder="New folder name…"
-                  className="flex-1 bg-[#0d0d18] border border-violet-500/50 rounded-md px-2 py-1 text-xs text-white placeholder-gray-600"/>
+                  className="flex-1 bg-[#0d0d18] border border-amber-500/50 rounded-md px-2 py-1 text-xs text-white placeholder-gray-600"/>
                 <button onClick={()=>handleCreateAndAdd(song, inlineNewFolder.name)}
-                  className="text-xs px-2 py-1 bg-violet-600 hover:bg-violet-700 text-white rounded-md font-semibold">✓</button>
+                  className="text-xs px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md font-semibold">✓</button>
               </div>
             ) : (
               <button onClick={()=>setInlineNewFolder({songId:song.id, name:""})}
-                className="w-full text-left px-4 py-2.5 text-sm text-violet-400 hover:bg-violet-600/20 last:rounded-b-xl transition-all">
+                className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-amber-600/20 last:rounded-b-xl transition-all">
                 + Create new folder
               </button>
             )}
@@ -4373,7 +4373,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         <div className={`flex flex-wrap gap-1.5 mt-2 ${isMobile?"justify-start":"justify-center"}`}>
           {LANGUAGES.map(l => (
             <button key={l} onClick={()=>setLanguage(l)}
-              className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+              className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-amber-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
               {l}
             </button>
           ))}
@@ -4393,7 +4393,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         </div>
         <div className="relative" onClick={e=>e.stopPropagation()}>
           <button onClick={()=>setShowAccount(v=>!v)}
-            className="flex items-center gap-2 px-2 py-1 rounded-full border border-[#2a2a3e] hover:border-violet-500 transition-all">
+            className="flex items-center gap-2 px-2 py-1 rounded-full border border-[#2a2a3e] hover:border-amber-500 transition-all">
             <Avatar username={username} size={28}/>
             <span className="text-xs text-gray-300 pr-1 hidden sm:inline">{username}</span>
           </button>
@@ -4407,13 +4407,13 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
               </div>
               {user.isGuest ? (
                 <button onClick={onLogout}
-                  className="w-full text-left px-4 py-2.5 text-sm text-violet-300 hover:bg-violet-600/20 transition-all">
+                  className="w-full text-left px-4 py-2.5 text-sm text-amber-300 hover:bg-amber-600/20 transition-all">
                   ✨ Sign up to save this
                 </button>
               ) : (
                 <>
                   <button onClick={()=>{ setShowAccount(false); onOpenSettings && onOpenSettings(); }}
-                    className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all">
+                    className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 transition-all">
                     ⚙ Settings
                   </button>
                   <button onClick={onLogout}
@@ -4432,7 +4432,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         <div className="px-6 pt-4 pb-6 border-b border-[#1a1a2a] flex-shrink-0">
           <div className="max-w-2xl mx-auto text-center">
             <h1 className="text-3xl font-bold text-white mb-1">
-              <span className="text-violet-400">{username}</span> is Jamming! 🎶
+              <span className="text-amber-400">{username}</span> is Jamming! 🎶
             </h1>
             <p className="text-gray-500 text-sm mb-6">Start the Vibe, Let it Flow 🎶</p>
             {searchInput}
@@ -4444,7 +4444,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
       {isMobile && (
         <div className="px-4 pb-3 flex-shrink-0">
           <h1 className="text-xl font-bold text-white">
-            <span className="text-violet-400">{username}</span> is Jamming! 🎶
+            <span className="text-amber-400">{username}</span> is Jamming! 🎶
           </h1>
         </div>
       )}
@@ -4456,7 +4456,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         <div className="flex-shrink-0 px-3 sm:px-6 py-2 border-b border-[#1a1a2a] bg-[#0f0f14] overflow-x-auto whitespace-nowrap chip-strip">
           <div className="flex items-center gap-2 max-w-3xl mx-auto">
             <button onClick={()=>setQuery("")}
-              className="text-xs px-2.5 py-1 rounded-full border border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-300 transition-all flex-shrink-0 font-medium">
+              className="text-xs px-2.5 py-1 rounded-full border border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-300 transition-all flex-shrink-0 font-medium">
               ← Home
             </button>
             {folders.length > 0 && (
@@ -4465,7 +4465,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 {folders.map(f => (
                   <button key={f.id} onClick={()=>onSelectFolder(f.id)}
                     title={`Open ${f.name}`}
-                    className="text-xs px-2.5 py-1 rounded-full border border-[#2a2a3e] text-gray-300 hover:border-violet-500 hover:text-violet-300 transition-all flex-shrink-0 max-w-[150px] truncate">
+                    className="text-xs px-2.5 py-1 rounded-full border border-[#2a2a3e] text-gray-300 hover:border-amber-500 hover:text-amber-300 transition-all flex-shrink-0 max-w-[150px] truncate">
                     📁 {f.name}
                   </button>
                 ))}
@@ -4482,7 +4482,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">🎵 Search Results</span>
               {loading
-                ? <div className="w-3 h-3 border border-violet-500 border-t-transparent rounded-full animate-spin"/>
+                ? <div className="w-3 h-3 border border-amber-500 border-t-transparent rounded-full animate-spin"/>
                 : mode === "artist"
                   ? (artistTotalPages && <span className="text-xs px-2 py-0.5 rounded-full live-badge">{artistTotal} total</span>)
                   : <span className="text-xs px-2 py-0.5 rounded-full live-badge">{allResults.length} total</span>}
@@ -4515,7 +4515,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                       </div>
                     </div>
                     <div className="flex gap-2 items-center flex-shrink-0">
-                      <button onClick={()=>onOpenSong(song)} className="text-xs px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium transition-all">Open</button>
+                      <button onClick={()=>onOpenSong(song)} className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition-all">Open</button>
                       {addBtn(song)}
                     </div>
                   </div>
@@ -4529,14 +4529,14 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 <button
                   onClick={()=>setPage(p=>Math.max(0,p-1))}
                   disabled={page === 0 || loading}
-                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${page===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${page===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-400"}`}>
                   ← Previous
                 </button>
                 <span className="text-xs text-gray-500">Page {page+1} of {totalPages}</span>
                 <button
                   onClick={()=>setPage(p=>p+1)}
                   disabled={!hasMore || loading}
-                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${!hasMore||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${!hasMore||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-400"}`}>
                   Next →
                 </button>
               </div>
@@ -4548,7 +4548,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 <button
                   onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
                   disabled={artistPage === 0 || loading}
-                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-400"}`}>
                   ← Previous
                 </button>
                 <span className="text-xs text-gray-500">
@@ -4557,7 +4557,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 <button
                   onClick={()=>setArtistPage(p=>p+1)}
                   disabled={(artistTotalPages ? artistPage+1 >= artistTotalPages : !artistHasMore) || loading}
-                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                  className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-400"}`}>
                   Next →
                 </button>
               </div>
@@ -4580,9 +4580,9 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                 const isAllSongs = f.name === ALL_SONGS_NAME;
                 return (
                 <div key={f.id} onClick={()=>onSelectFolder(f.id)}
-                  className={`folder-card rounded-2xl p-5 cursor-pointer transition-all relative ${isAllSongs ? "bg-gradient-to-br from-violet-600/20 to-[#1a1a2e] border-2 border-violet-500/50" : "bg-[#1a1a2e] border border-[#2a2a3e]"}`}>
+                  className={`folder-card rounded-2xl p-5 cursor-pointer transition-all relative ${isAllSongs ? "bg-gradient-to-br from-amber-600/20 to-[#1a1a2e] border-2 border-amber-500/50" : "bg-[#1a1a2e] border border-[#2a2a3e]"}`}>
                   {isAllSongs && (
-                    <span className="absolute -top-2 left-4 text-[10px] font-bold tracking-wider uppercase bg-violet-600 text-white px-2 py-0.5 rounded-full">📌 Pinned</span>
+                    <span className="absolute -top-2 left-4 text-[10px] font-bold tracking-wider uppercase bg-amber-600 text-white px-2 py-0.5 rounded-full">📌 Pinned</span>
                   )}
                   <div className="flex items-start justify-between mb-3">
                     <div className="text-4xl">{isAllSongs ? "🗂️" : "📁"}</div>
@@ -4590,14 +4590,14 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                       <button
                         onClick={()=>setOpenFolderMenu(openFolderMenu===f.id?null:f.id)}
                         title="Folder actions"
-                        className="text-gray-400 hover:text-violet-300 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[#0d0d18] transition-all text-base">
+                        className="text-gray-400 hover:text-amber-300 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[#0d0d18] transition-all text-base">
                         ⋮
                       </button>
                       {openFolderMenu===f.id && (
                         <div className="absolute right-0 top-full mt-1 bg-[#0d0d18] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44 overflow-hidden">
                           <button
                             onClick={()=>{onShareFolder(f); setOpenFolderMenu(null);}}
-                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all">
+                            className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 transition-all">
                             ↗ Share
                           </button>
                           {onStartBroadcast && (
@@ -4614,7 +4614,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                                 if (name && name.trim() && name.trim() !== f.name) onRenameFolder(f.id, name.trim());
                                 setOpenFolderMenu(null);
                               }}
-                              className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-violet-600/20 hover:text-violet-300 transition-all border-t border-[#2e2e44]">
+                              className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 transition-all border-t border-[#2e2e44]">
                               ✏ Rename
                             </button>
                           )}
@@ -4643,20 +4643,20 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
               {/* Create new folder card */}
               {!creatingFolder ? (
                 <div onClick={()=>setCreating(true)}
-                  className="bg-[#0d0d18] border-2 border-dashed border-[#2a2a3e] hover:border-violet-500 hover:bg-violet-600/5 rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px]">
-                  <div className="text-4xl text-violet-500 mb-2">+</div>
-                  <div className="text-sm font-semibold text-violet-400">New Folder</div>
+                  className="bg-[#0d0d18] border-2 border-dashed border-[#2a2a3e] hover:border-amber-500 hover:bg-amber-600/5 rounded-2xl p-5 cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px]">
+                  <div className="text-4xl text-amber-500 mb-2">+</div>
+                  <div className="text-sm font-semibold text-amber-400">New Folder</div>
                   <div className="text-xs text-gray-600 mt-1">Create a jam session</div>
                 </div>
               ) : (
-                <div className="bg-[#1a1a2e] border-2 border-violet-500 rounded-2xl p-5 flex flex-col justify-center min-h-[140px]">
+                <div className="bg-[#1a1a2e] border-2 border-amber-500 rounded-2xl p-5 flex flex-col justify-center min-h-[140px]">
                   <input autoFocus value={newFolderName} onChange={e=>setNewName(e.target.value)}
                     onKeyDown={e=>{ if(e.key==="Enter") handleCreateFolder(); if(e.key==="Escape"){setCreating(false);setNewName("");} }}
                     placeholder="Folder name…"
-                    className="w-full bg-[#0d0d18] border border-violet-500/50 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 mb-2"/>
+                    className="w-full bg-[#0d0d18] border border-amber-500/50 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 mb-2"/>
                   <div className="flex gap-2">
                     <button onClick={handleCreateFolder}
-                      className="flex-1 text-xs py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-all font-semibold">Create</button>
+                      className="flex-1 text-xs py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-all font-semibold">Create</button>
                     <button onClick={()=>{setCreating(false);setNewName("");}}
                       className="text-xs py-1.5 px-3 border border-[#2a2a3e] text-gray-400 hover:text-white rounded-lg transition-all">Cancel</button>
                   </div>
@@ -4677,7 +4677,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
             {/* Helpful empty hint when no folders at all */}
             {folders.length===0 && !creatingFolder && (
               <p className="text-center text-xs text-gray-600 mt-6">
-                Tap <span className="text-violet-400 font-semibold">+ New Folder</span> to create your first jam session.
+                Tap <span className="text-amber-400 font-semibold">+ New Folder</span> to create your first jam session.
               </p>
             )}
           </div>
@@ -4701,13 +4701,13 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
 
   if (collapsed) return (
     <div className="sidebar-transition w-12 flex-shrink-0 bg-[#0d0d18] border-r border-[#1a1a2a] flex flex-col items-center py-3 gap-3">
-      <button onClick={onToggleCollapse} className="text-gray-500 hover:text-violet-400 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">›</button>
+      <button onClick={onToggleCollapse} className="text-gray-500 hover:text-amber-400 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#1a1a2e] transition-all">›</button>
       <div className="w-px h-4 bg-[#2a2a3a]"/>
-      <button onClick={onGoSearch} title="Search" className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all text-base ${activeView==="search"?"bg-violet-600/20 text-violet-400":"text-gray-500 hover:bg-[#1a1a2e] hover:text-white"}`}>🔍</button>
+      <button onClick={onGoSearch} title="Search" className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all text-base ${activeView==="search"?"bg-amber-600/20 text-amber-400":"text-gray-500 hover:bg-[#1a1a2e] hover:text-white"}`}>🔍</button>
       <div className="w-px h-4 bg-[#2a2a3a]"/>
       {folders.map(f=>(
         <button key={f.id} onClick={()=>onSelectFolder(f.id)} title={f.name}
-          className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all text-sm ${activeFolderId===f.id&&activeView==="folder"?"bg-violet-600/20 text-violet-400":"text-gray-500 hover:bg-[#1a1a2e] hover:text-white"}`}>📁</button>
+          className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all text-sm ${activeFolderId===f.id&&activeView==="folder"?"bg-amber-600/20 text-amber-400":"text-gray-500 hover:bg-[#1a1a2e] hover:text-white"}`}>📁</button>
       ))}
       <div className="mt-auto"><Avatar username={user.username} size={30}/></div>
     </div>
@@ -4724,15 +4724,15 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
       </div>
       <nav className="px-3 pt-3 space-y-1">
         <button onClick={onGoSearch}
-          className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeView==="search"?"bg-violet-600/20 text-violet-300 border border-violet-600/30":"text-gray-400 hover:bg-[#1a1a2e] hover:text-white"}`}>
+          className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeView==="search"?"bg-amber-600/20 text-amber-300 border border-amber-600/30":"text-gray-400 hover:bg-[#1a1a2e] hover:text-white"}`}>
           🔍 Search Songs
         </button>
       </nav>
       <div className="px-3 pt-4 pb-2 flex items-center justify-between">
         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">My Folders</span>
         <div className="flex gap-1">
-          <button onClick={onShowImport} title="Import shared" className="text-gray-500 hover:text-violet-400 text-xs px-1.5 py-1 rounded transition-all">⬇</button>
-          <button onClick={()=>setCreating(v=>!v)} className="text-violet-400 hover:text-violet-300 text-xl leading-none w-6 h-6 flex items-center justify-center">+</button>
+          <button onClick={onShowImport} title="Import shared" className="text-gray-500 hover:text-amber-400 text-xs px-1.5 py-1 rounded transition-all">⬇</button>
+          <button onClick={()=>setCreating(v=>!v)} className="text-amber-400 hover:text-amber-300 text-xl leading-none w-6 h-6 flex items-center justify-center">+</button>
         </div>
       </div>
       {creating&&(
@@ -4740,30 +4740,30 @@ function Sidebar({user,folders,activeFolderId,onSelectFolder,onCreateFolder,onDe
           <input autoFocus value={newName} onChange={e=>setNewName(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter")create();if(e.key==="Escape")setCreating(false);}}
             placeholder="Folder name…"
-            className="w-full bg-[#1a1a2e] border border-violet-500/50 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600"/>
-          <button onClick={create} className="mt-1.5 w-full text-xs py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-all">Create</button>
+            className="w-full bg-[#1a1a2e] border border-amber-500/50 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600"/>
+          <button onClick={create} className="mt-1.5 w-full text-xs py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-all">Create</button>
         </div>
       )}
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1">
         {folders.length===0&&!creating&&<div className="text-xs text-gray-600 px-3 py-2">No folders yet. Tap + to create one.</div>}
         {folders.map(f=>(
           <div key={f.id}
-            className={`folder-card group flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all cursor-pointer ${activeFolderId===f.id&&activeView==="folder"?"bg-violet-600/20 border-violet-600/30 text-violet-300":"border-transparent text-gray-400 hover:text-white"}`}
+            className={`folder-card group flex items-center justify-between px-3 py-2.5 rounded-lg border transition-all cursor-pointer ${activeFolderId===f.id&&activeView==="folder"?"bg-amber-600/20 border-amber-600/30 text-amber-300":"border-transparent text-gray-400 hover:text-white"}`}
             onClick={()=>onSelectFolder(f.id)}>
             <span className="text-sm flex items-center gap-2 min-w-0">
               <span>📁</span>
               <span className="truncate">{f.name}</span>
               <span className="text-xs text-gray-600 flex-shrink-0">({f.songs?.length||0})</span>
-              {f.shareCode&&<span className="text-xs text-violet-600">↗</span>}
+              {f.shareCode&&<span className="text-xs text-amber-600">↗</span>}
             </span>
             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
-              <button onClick={e=>{e.stopPropagation();onShareFolder(f);}} title="Share" className="text-gray-600 hover:text-violet-400 text-xs px-1 transition-all">↗</button>
+              <button onClick={e=>{e.stopPropagation();onShareFolder(f);}} title="Share" className="text-gray-600 hover:text-amber-400 text-xs px-1 transition-all">↗</button>
               {onRenameFolder && (
                 <button onClick={e=>{
                   e.stopPropagation();
                   const name = window.prompt("Rename folder", f.name);
                   if (name && name.trim() && name.trim() !== f.name) onRenameFolder(f.id, name.trim());
-                }} title="Rename" className="text-gray-600 hover:text-violet-400 text-xs px-1 transition-all">✏</button>
+                }} title="Rename" className="text-gray-600 hover:text-amber-400 text-xs px-1 transition-all">✏</button>
               )}
               <button onClick={e=>{e.stopPropagation();onDeleteFolder(f.id);}} className="text-gray-600 hover:text-red-400 text-xs px-1 transition-all">✕</button>
             </div>
@@ -4997,7 +4997,7 @@ function RequestSongPage({ token }) {
   if (folder === undefined) {
     return (
       <div className="auth-bg min-h-screen flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin"/>
+        <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"/>
       </div>
     );
   }
@@ -5017,7 +5017,7 @@ function RequestSongPage({ token }) {
       <div className="px-4 sm:px-6 pt-6 pb-4 border-b border-[#1e1e2e] text-center flex-shrink-0">
         <div className="text-2xl mb-1">🎤</div>
         <h1 className="text-base sm:text-lg font-bold text-white">Requesting songs for</h1>
-        <div className="text-sm font-semibold text-violet-300">📁 {folder.name}</div>
+        <div className="text-sm font-semibold text-amber-300">📁 {folder.name}</div>
         <p className="text-xs text-gray-500 mt-1">Search a song and tap Add — it lands straight in the session queue.</p>
       </div>
 
@@ -5028,19 +5028,19 @@ function RequestSongPage({ token }) {
             <div className="flex flex-wrap gap-1.5 mb-2 justify-center">
               {REQUEST_FILTERS.map(f => (
                 <button key={f.value} onClick={()=>setFilterBy(f.value)}
-                  className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${filterBy===f.value?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+                  className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${filterBy===f.value?"active border-amber-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
                   {f.label}
                 </button>
               ))}
             </div>
             <input value={query} onChange={e=>setQuery(e.target.value)} autoFocus
               placeholder={filterBy==="movie" ? "Search by movie name…" : filterBy==="artist" ? "Search by artist name…" : "Search for a song…"}
-              className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center focus:border-violet-500 focus:outline-none"/>
+              className="w-full bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-4 py-3 text-white placeholder-gray-500 text-sm text-center focus:border-amber-500 focus:outline-none"/>
             {filterBy !== "movie" && (
               <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
                 {LANGUAGES.map(l => (
                   <button key={l} onClick={()=>setLanguage(l)}
-                    className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-violet-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
+                    className={`lang-pill text-xs px-2.5 py-1 rounded-full border font-medium transition-all ${language===l?"active border-amber-600":"border-[#2a2a3e] text-gray-400 hover:border-gray-500"}`}>
                     {l}
                   </button>
                 ))}
@@ -5087,7 +5087,7 @@ function RequestSongPage({ token }) {
                       <button onClick={()=>handleAdd(song)}
                         disabled={completed || added || addingId === song.id || capReached || personalCapReached}
                         title={!completed && !added && capReached ? "This session has reached its song limit" : !completed && !added && personalCapReached ? "You've reached your personal request limit" : undefined}
-                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${completed ? "bg-gray-700/30 text-gray-400 border border-gray-600/40" : added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-violet-600 hover:bg-violet-700 text-white"}`}>
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex-shrink-0 disabled:cursor-not-allowed ${completed ? "bg-gray-700/30 text-gray-400 border border-gray-600/40" : added ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/40" : "bg-amber-600 hover:bg-amber-700 text-white"}`}>
                         {completed ? "✓ Completed" : added ? "✓ Added" : addingId === song.id ? "…" : (capReached || personalCapReached) ? "🚫 Full" : "➕ Add"}
                       </button>
                     </div>
@@ -5100,7 +5100,7 @@ function RequestSongPage({ token }) {
                   <button
                     onClick={()=>setArtistPage(p=>Math.max(0,p-1))}
                     disabled={artistPage === 0 || loading}
-                    className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                    className={`text-xs px-4 py-2 rounded-lg border transition-all ${artistPage===0||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-400"}`}>
                     ← Previous
                   </button>
                   <span className="text-xs text-gray-500">
@@ -5109,7 +5109,7 @@ function RequestSongPage({ token }) {
                   <button
                     onClick={()=>setArtistPage(p=>p+1)}
                     disabled={(artistTotalPages ? artistPage+1 >= artistTotalPages : !artistHasMore) || loading}
-                    className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-violet-500 hover:text-violet-400"}`}>
+                    className={`text-xs px-4 py-2 rounded-lg border transition-all ${(artistTotalPages ? artistPage+1>=artistTotalPages : !artistHasMore)||loading?"border-[#1e1e2e] text-gray-700 cursor-not-allowed":"border-[#2e2e44] text-gray-300 hover:border-amber-500 hover:text-amber-400"}`}>
                     Next →
                   </button>
                 </div>
@@ -6018,7 +6018,7 @@ function App() {
   if (bootLoading) {
     return (
       <div className="auth-bg min-h-screen flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin"/>
+        <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"/>
       </div>
     );
   }
@@ -6179,7 +6179,7 @@ class ErrorBoundary extends React.Component {
           <pre style={{whiteSpace:"pre-wrap", fontSize:12, color:"#d4d4d8", background:"#1a1a2e", padding:12, borderRadius:8, overflow:"auto"}}>{msg}</pre>
           <p style={{fontSize:12, color:"#71717a", marginTop:12}}>Open the console (F12) to see the full stack trace. Share the error above with the developer.</p>
           <button onClick={()=>{ this.setState({error:null}); window.location.reload(); }}
-            style={{marginTop:16, padding:"8px 16px", background:"#7c3aed", color:"white", border:"none", borderRadius:8, cursor:"pointer", fontSize:13}}>
+            style={{marginTop:16, padding:"8px 16px", background:"#d97706", color:"white", border:"none", borderRadius:8, cursor:"pointer", fontSize:13}}>
             ↺ Reload
           </button>
         </div>
