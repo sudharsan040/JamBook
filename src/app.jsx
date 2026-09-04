@@ -2452,6 +2452,18 @@ function Spinner() {
   return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>;
 }
 
+// Monochrome music-note icon — used in place of the 🎶 emoji wherever it sits
+// next to themed text, since color emoji glyphs ignore CSS `color` and render
+// in whatever hue the OS emoji font picks (came out purple on Windows,
+// clashing with the amber theme). This one takes `className` for color/size.
+function MusicNoteIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+    </svg>
+  );
+}
+
 // Full-screen splash shown while a ?share= link resolves — logo, tagline,
 // and a rotating line of music-y loading text so the sign-in/home/list
 // flash never shows through underneath.
@@ -4481,9 +4493,9 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
         <div className="px-6 pt-4 pb-6 border-b border-[#1a1a2a] flex-shrink-0">
           <div className="max-w-2xl mx-auto text-center">
             <h1 className="text-3xl font-bold text-white mb-1">
-              <span className="text-amber-400">{username}</span> is Jamming! 🎶
+              <span className="text-amber-400">{username}</span> is Jamming! <MusicNoteIcon className="inline-block w-7 h-7 align-text-bottom text-amber-400"/>
             </h1>
-            <p className="text-gray-500 text-sm mb-6">Start the Vibe, Let it Flow 🎶</p>
+            <p className="text-gray-500 text-sm mb-6">Start the Vibe, Let it Flow <MusicNoteIcon className="inline-block w-4 h-4 align-text-bottom text-amber-400"/></p>
             {searchInput}
           </div>
         </div>
@@ -4493,7 +4505,7 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
       {isMobile && (
         <div className="px-4 pb-3 flex-shrink-0">
           <h1 className="text-xl font-bold text-white">
-            <span className="text-amber-400">{username}</span> is Jamming! 🎶
+            <span className="text-amber-400">{username}</span> is Jamming! <MusicNoteIcon className="inline-block w-5 h-5 align-text-bottom text-amber-400"/>
           </h1>
         </div>
       )}
