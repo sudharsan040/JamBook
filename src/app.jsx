@@ -5715,6 +5715,12 @@ function App() {
         event: "song_change",
         payload: { song, cachedLyrics, broadcaster: user?.username },
       });
+      // Also update my presence payload so anyone who joins AFTER this point
+      // (not just people already connected when the broadcast event fired)
+      // can catch up to whatever song is currently live.
+      broadcastChannelRef.current.track({
+        username: user?.username || "viewer", broadcasting: true, name: user?.username, song,
+      });
     }
   };
 
@@ -5737,8 +5743,29 @@ function App() {
     channel
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState();
-        const count = Object.values(state).reduce((s, arr) => s + arr.length, 0);
-        setViewerCount(count);
+        const entries = Object.values(state).flat();
+        setViewerCount(entries.length);
+        // Catch-up path: someone (re)joining mid-broadcast never sees the
+        // one-shot "moderator_start"/"song_change" broadcast events that
+        // already fired before they connected. Presence, unlike broadcast
+        // events, is current state anyone can read at any time — the
+        // moderator keeps their presence payload updated with whatever
+        // song is live, so a fresh joiner can jump straight to it here.
+        if (isBroadcastingRef.current) return; // I'm the moderator, nothing to sync
+        const modEntry = entries.find(e => e && e.broadcasting);
+        if (modEntry) {
+          const justDiscovered = !broadcastModeratorRef.current;
+          setBroadcastModerator({ name: modEntry.name || "Someone" });
+          if (justDiscovered && modEntry.song) {
+            cacheSong(modEntry.song);
+            setActiveSong(modEntry.song);
+            setView("song");
+            setFollowingBroadcast(true);
+          }
+        } else if (broadcastModeratorRef.current) {
+          setBroadcastModerator(null);
+          setFollowingBroadcast(false);
+        }
       })
       .on("broadcast", { event: "moderator_start" }, ({ payload }) => {
         setBroadcastModerator(payload || { name: "Someone" });
@@ -5803,6 +5830,12 @@ function App() {
   const isBroadcastingRef = React.useRef(false);
   React.useEffect(() => { isBroadcastingRef.current = isBroadcasting; }, [isBroadcasting]);
 
+  // Ref-mirror of broadcastModerator so the presence-sync closure (set up once
+  // per channel subscribe) can tell "just discovered a live broadcast" apart
+  // from "already known about it" without re-subscribing.
+  const broadcastModeratorRef = React.useRef(null);
+  React.useEffect(() => { broadcastModeratorRef.current = broadcastModerator; }, [broadcastModerator]);
+
   // Start broadcasting (moderator only) — assigns a broadcastRoom if missing
   const startBroadcast = async () => {
     if (!activeFolder || !canBroadcast) return;
@@ -5821,6 +5854,7 @@ function App() {
     const channel = broadcastChannelRef.current;
     if (channel) {
       channel.send({ type: "broadcast", event: "moderator_start", payload: { name: user.username } });
+      channel.track({ username: user?.username || "viewer", broadcasting: true, name: user.username, song: activeSong || undefined });
     }
     showToast("Broadcasting started · your song picks will sync");
   };
@@ -5830,6 +5864,7 @@ function App() {
     const channel = broadcastChannelRef.current;
     if (channel) {
       channel.send({ type: "broadcast", event: "moderator_stop", payload: {} });
+      channel.track({ username: user?.username || "viewer", broadcasting: false });
     }
     showToast("Broadcast stopped");
   };
@@ -5875,6 +5910,9 @@ function App() {
     setIsBroadcasting(true);
     broadcastChannelRef.current?.send({
       type: "broadcast", event: "moderator_start", payload: { name: user.username },
+    });
+    broadcastChannelRef.current?.track({
+      username: user?.username || "viewer", broadcasting: true, name: user.username, song: activeSong || undefined,
     });
     showToast("Broadcasting started · your song picks will sync");
     setPendingBroadcastId(null);
