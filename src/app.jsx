@@ -2495,35 +2495,36 @@ function ShareLoadingSplash() {
   );
 }
 
-// Cute overlay the host can beam out to everyone in the room with a tap of
-// 🙏 — thanks the crowd, faded logo in the background, Instagram follow CTA.
-// Auto-dismisses itself; anyone can also close it early.
+// Cute overlay the host can beam out to everyone in the room — thanks the
+// crowd, faded favicon mark in the background, Instagram follow CTA. Stays
+// up until the HOST closes it (which closes it for everyone); audience
+// members get no close control of their own, no auto-dismiss timer.
 const THANK_YOU_LINES = [
   "For singing along, clapping off-beat, and making every chorus louder than the last.",
   "For every request, every sing-along, every encore that wasn't in the setlist.",
   "For being the reason this jam felt like a show.",
 ];
-function ThankYouOverlay({ onClose }) {
+function ThankYouOverlay({ onClose, canClose }) {
   const [line] = React.useState(() => THANK_YOU_LINES[Math.floor(Math.random() * THANK_YOU_LINES.length)]);
-  React.useEffect(() => {
-    const t = setTimeout(onClose, 9000);
-    return () => clearTimeout(t);
-  }, [onClose]);
   return (
-    <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/80 backdrop-blur-sm px-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/80 backdrop-blur-sm px-6"
+      onClick={canClose ? onClose : undefined}>
       <div className="relative max-w-sm w-full rounded-2xl border border-amber-500/30 bg-[#13131e] p-8 text-center overflow-hidden shadow-2xl"
         onClick={e=>e.stopPropagation()}>
-        <img src="logo.png" alt="" draggable="false"
+        <img src="favicon-512.png" alt="" draggable="false"
           className="absolute inset-0 w-full h-full object-contain opacity-[0.08] pointer-events-none select-none"/>
-        <button onClick={onClose} className="absolute top-3 right-3 text-gray-500 hover:text-white text-lg leading-none">✕</button>
+        {canClose && (
+          <button onClick={onClose} title="Close for everyone" className="absolute top-3 right-3 text-gray-500 hover:text-white text-lg leading-none">✕</button>
+        )}
         <div className="relative">
-          <div className="text-4xl mb-3">🙏 🎶</div>
+          <img src="logo.png" alt="RubberBand" draggable="false"
+            className="w-40 mx-auto mb-4 select-none"/>
           <h3 className="text-lg font-bold text-white mb-2">Thank You!</h3>
           <p className="text-sm text-gray-300 mb-1 leading-relaxed">{line}</p>
-          <p className="text-xs text-gray-500 mb-6">Keep the rhythm going 🥁 · same time next jam? 🎸</p>
+          <p className="text-xs text-gray-500 mb-6">Keep the rhythm going</p>
           <a href="https://www.instagram.com/thatrubberband/" target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white text-sm font-semibold hover:opacity-90 transition-all">
-            📸 Follow us on Instagram
+            Follow us on Instagram
           </a>
         </div>
       </div>
@@ -5972,6 +5973,10 @@ function App() {
         // Host sent a thank-you to everyone in the room — show it here too.
         setShowThankYou(true);
       })
+      .on("broadcast", { event: "thank_you_close" }, () => {
+        // Host closed it — stays up for everyone else until this fires.
+        setShowThankYou(false);
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({ username: user?.username || "viewer" });
@@ -6043,6 +6048,13 @@ function App() {
     const channel = broadcastChannelRef.current;
     if (channel) channel.send({ type: "broadcast", event: "thank_you", payload: {} });
     setShowThankYou(true);
+  };
+
+  // Only the host can dismiss it — and doing so closes it for everyone else too.
+  const closeThankYou = () => {
+    const channel = broadcastChannelRef.current;
+    if (channel) channel.send({ type: "broadcast", event: "thank_you_close", payload: {} });
+    setShowThankYou(false);
   };
 
   // Pushed by LiveSongView's switchSource() when the moderator picks a different
@@ -6237,7 +6249,7 @@ function App() {
       {showSettings && (
         <SettingsModal onClose={()=>setShowSettings(false)} showToast={showToast}/>
       )}
-      {showThankYou && <ThankYouOverlay onClose={()=>setShowThankYou(false)}/>}
+      {showThankYou && <ThankYouOverlay onClose={closeThankYou} canClose={canBroadcast}/>}
       {toast&&<div className="toast">{toast}</div>}
     </div>
   );
