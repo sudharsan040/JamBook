@@ -5175,6 +5175,7 @@ function App() {
   const [showSettings,setShowSettings]     = React.useState(false);
   const isMobile                           = useIsMobile();
   const [pendingShare,setPendingShare]     = React.useState(null);
+  const [foldersReady,setFoldersReady]     = React.useState(false);
   const [toast,showToast]                  = useToast();
 
   // ─── Broadcast state ──────────────────────────────────────────────
@@ -5203,8 +5204,9 @@ function App() {
   // Load folders from db whenever user changes; auto-create "Vibe List" if empty.
   // Skipped entirely for guest users — they only see the shared folder.
   React.useEffect(() => {
-    if (!user)         { setFolders([]); return; }
-    if (user.isGuest)  return; // guest folder is materialised by share-effect
+    if (!user)         { setFolders([]); setFoldersReady(false); return; }
+    if (user.isGuest)  { setFoldersReady(true); return; } // guest folder is materialised by share-effect
+    setFoldersReady(false);
     (async () => {
       let fs = await db.getFolders(user);
       if (!fs || fs.length === 0) {
@@ -5225,6 +5227,7 @@ function App() {
       // a Request Songs link since this device last loaded. No toast, no
       // button; this is the "no manual trigger" half of keeping it in sync.
       reconcileAllSongsFolder(fs || []).catch(() => {});
+      setFoldersReady(true);
     })();
   }, [user?.id]);
 
@@ -5236,15 +5239,11 @@ function App() {
     })();
   }, []);
 
-  // When a share link is opened by a signed-in user → prompt them to import.
-  // When opened by a guest (no account) → drop them STRAIGHT into a preview
-  // of the folder, no auth wall. They can sign up later to save it.
+  // When a share link is opened by a guest (no account) → drop them STRAIGHT
+  // into a preview of the folder, no auth wall. They can sign up later to
+  // save it. Signed-in users are handled by the silent-import effect below.
   React.useEffect(() => {
     if (!pendingShare) return;
-    if (user && !user.isGuest) {
-      setShowImport(true);
-      return;
-    }
     if (!user) {
       // Create an in-memory guest session — no Supabase writes, no persistence
       const guest = {
@@ -5256,6 +5255,43 @@ function App() {
       setUser(guest);
     }
   }, [user, pendingShare]);
+
+  // Signed-in user opens a share link → import it (or reuse the folder they
+  // already imported from this same broadcast room, instead of duplicating
+  // it every time the link is clicked) silently in the background, then jump
+  // straight into it. No "Import" popup, no clicking through to the folder —
+  // the broadcast-catch-up presence logic (in the room-subscribe effect)
+  // takes it from there and opens the live song automatically if one's on.
+  const shareImportInFlight = React.useRef(false);
+  React.useEffect(() => {
+    if (!pendingShare || !user || user.isGuest) return;
+    if (!foldersReady) return; // wait for the folder list so we can dedupe
+    if (shareImportInFlight.current) return;
+    const existing = pendingShare.broadcastRoom
+      ? folders.find(f => f.broadcastRoom === pendingShare.broadcastRoom)
+      : null;
+    if (existing) {
+      setActiveFolderId(existing.id);
+      setView("folder");
+      setSidebarCollapsed(false);
+      setPendingShare(null);
+      clearShareFromUrl();
+      return;
+    }
+    shareImportInFlight.current = true;
+    (async () => {
+      try {
+        const newF = await importFolder(pendingShare); // creates + sets folders + clears pendingShare/url + toasts
+        if (newF) {
+          setActiveFolderId(newF.id);
+          setView("folder");
+          setSidebarCollapsed(false);
+        }
+      } finally {
+        shareImportInFlight.current = false;
+      }
+    })();
+  }, [pendingShare, user, foldersReady, folders]);
 
   // After guest user is set + we have a pending share, materialise the folder
   // locally so the existing FolderView/LiveSongView can render it as-is.
@@ -5695,6 +5731,7 @@ function App() {
     // Pre-fetch anything still missing (not embedded, not archived) in background
     archiveCustomSongs(songs);
     preFetchFolderSongs(songs).catch(() => {});
+    return newF;
   };
 
   const openSong = (song, folderId) => {
