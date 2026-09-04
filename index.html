@@ -57,6 +57,8 @@
   .drawer-panel    { position:fixed; top:0; right:0; bottom:0; width:78vw; max-width:320px; background:#0d0d18; z-index:81; box-shadow:-8px 0 24px rgba(0,0,0,.5); animation:slideIn .25s cubic-bezier(.4,0,.2,1); }
   @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
   .mobile-search-bar { position:fixed; bottom:0; left:0; right:0; padding:10px 12px; background:rgba(13,13,24,.97); border-top:1px solid #1a1a2a; z-index:40; backdrop-filter:blur(8px); }
+  .eq-bar { height:6px; animation: eqBounce .9s ease-in-out infinite alternate; }
+  @keyframes eqBounce { from{height:6px} to{height:26px} }
   .stanza          { margin-bottom:1rem; }
   .stanza-line     { font-size:calc(1.15rem * var(--lyrics-scale, 1)); line-height:1.5; color:#e8e8f0; font-weight:500; }
   .stanza-section  { font-size:.7rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.4rem; padding:3px 10px; border-radius:9999px; display:inline-block; }

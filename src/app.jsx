@@ -2452,6 +2452,37 @@ function Spinner() {
   return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>;
 }
 
+// Full-screen splash shown while a ?share= link resolves — logo, tagline,
+// and a rotating line of music-y loading text so the sign-in/home/list
+// flash never shows through underneath.
+const SHARE_LOADING_WORDS = [
+  "Tuning strings…", "Finding the beat…", "Cueing the mic…",
+  "Warming up the amps…", "Syncing the setlist…", "Checking sound levels…",
+  "Dialing in the reverb…", "Passing the aux cord…",
+];
+function ShareLoadingSplash() {
+  const [wordIdx, setWordIdx] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setWordIdx(i => (i + 1) % SHARE_LOADING_WORDS.length), 1100);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-[#0f0f14] px-6">
+      <img src="logo.png" alt="RubberBand" draggable="false"
+        className="w-full max-w-[260px] sm:max-w-xs mb-6 select-none"/>
+      <p className="text-gray-400 text-sm sm:text-base tracking-wide mb-8 text-center">
+        Music For Everyone <span className="text-amber-500">|</span> By Everyone
+      </p>
+      <div className="flex items-end gap-1.5 h-7 mb-4">
+        {[0,1,2,3,4].map(i => (
+          <span key={i} className="w-1.5 bg-amber-500 rounded-full eq-bar" style={{ animationDelay: `${i*0.12}s` }}/>
+        ))}
+      </div>
+      <p className="text-gray-500 text-xs">{SHARE_LOADING_WORDS[wordIdx]}</p>
+    </div>
+  );
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────
 function AuthPage({onLogin}) {
   const [mode,setMode]         = React.useState("login");
@@ -5178,6 +5209,14 @@ function App() {
   const [foldersReady,setFoldersReady]     = React.useState(false);
   const [toast,showToast]                  = useToast();
 
+  // A ?share= link is resolved entirely behind a full-screen splash so the
+  // user never sees the sign-in→home→folder-list→song flash — just the
+  // logo, then the final screen. Computed synchronously on first render so
+  // it's already up before anything else has a chance to paint.
+  const [shareSplashVisible, setShareSplashVisible] = React.useState(() => {
+    try { return !!new URLSearchParams(window.location.search).get("share"); } catch { return false; }
+  });
+
   // ─── Broadcast state ──────────────────────────────────────────────
   // isBroadcasting: I'm the moderator pushing songs to a Realtime channel
   // broadcastModerator: someone ELSE is broadcasting in the folder I'm viewing
@@ -5236,8 +5275,28 @@ function App() {
     (async () => {
       const data = await decodeShareFromUrl();
       if (data) setPendingShare(data);
+      else setShareSplashVisible(false); // no valid share payload — nothing to wait for
     })();
   }, []);
+
+  // Hide the splash once we've actually landed somewhere: the live song
+  // (best case — broadcast catch-up got there), or the folder view after a
+  // brief grace window for that catch-up to fire (nothing broadcasting).
+  React.useEffect(() => {
+    if (!shareSplashVisible) return;
+    if (view === "song" && activeFolderId) { setShareSplashVisible(false); return; }
+    if (view === "folder" && activeFolderId && !pendingShare) {
+      const t = setTimeout(() => setShareSplashVisible(false), 1200);
+      return () => clearTimeout(t);
+    }
+  }, [shareSplashVisible, pendingShare, activeFolderId, view]);
+
+  // Safety net so a broken/slow link can't leave the splash up forever.
+  React.useEffect(() => {
+    if (!shareSplashVisible) return;
+    const t = setTimeout(() => setShareSplashVisible(false), 6000);
+    return () => clearTimeout(t);
+  }, [shareSplashVisible]);
 
   // When a share link is opened by a guest (no account) → drop them STRAIGHT
   // into a preview of the folder, no auth wall. They can sign up later to
@@ -5963,6 +6022,12 @@ function App() {
       </div>
     );
   }
+
+  // Resolving a ?share= link — keep the sign-in/home/list flash hidden
+  // behind the splash until we've landed on the live song (or the folder,
+  // if nothing's live). Checked before the auth wall so guests never see
+  // AuthPage flicker through while their in-memory session gets created.
+  if (shareSplashVisible) return <ShareLoadingSplash/>;
 
   if (!user) return <AuthPage onLogin={setUser}/>;
 
