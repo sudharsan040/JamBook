@@ -40,11 +40,6 @@ Live demo: **https://sudharsan040.github.io/JamBook/**
 - **Vocal markers** — type or insert `[Verse]`, `[Chorus]`, `[Male]`, `[Female]`, `[Duet]`, `[Bridge]` to get coloured tags
 - **Chord lines** — type chords alone on a line (`C  G  Am  F`) to render as chord rows above the lyrics
 
-### 🎸 Chords on Demand
-- **One smart "Chords" button** races Ultimate Guitar / Torrins / Genius in parallel via a CORS proxy
-- Highlighted with a link when a chord sheet exists; blurred when nothing's found
-- Result cached per song
-
 ### 🎵 Performance Helpers
 - **Auto-scroll** with Slow / Medium / Fast speeds — sub-pixel accumulator for buttery slow scrolling
 - **Romanized ↔ Native** toggle for Indic scripts
@@ -336,7 +331,7 @@ Built-in rule-based Tamil mapper + loanword dictionary
 | iTunes Search API | No rate limit publicly documented | Used on every search |
 | lyrics APIs | Various, all free, no key | Used on song open |
 | Google Translate | Public web endpoint, soft-limited | Used in background for romanization |
-| AllOrigins (CORS proxy) | Free, rate-limited | Used for tamil2lyrics + chord checks |
+| AllOrigins (CORS proxy) | Free, rate-limited | Used for tamil2lyrics |
 
 For personal/group use this will never cost a rupee.
 
@@ -350,7 +345,6 @@ JamBook stands on the shoulders of several free, community-maintained services:
 - **lrclib.net** — open lyrics database
 - **lyrics.ovh, ChartLyrics, some-random-api** — lyrics fallbacks
 - **tamil2lyrics.com** — Tanglish for Tamil songs (scraped via CORS proxy)
-- **Ultimate Guitar, Torrins, Genius** — chord sheets (linked, not scraped)
 - **Google Translate** — context-aware romanization
 - **AllOrigins** — CORS proxy
 - **Supabase** — auth + database

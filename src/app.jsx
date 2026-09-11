@@ -1623,13 +1623,6 @@ async function fetchLyricsFromSource(artist, title, source, album = "") {
   return null;
 }
 
-function ugLink(title, artist)    { return `https://www.ultimate-guitar.com/search.php?title=${encodeURIComponent(title)}&performer=${encodeURIComponent(artist)}`; }
-function torrinsLink(title)        { return `https://www.torrins.com/guitar-lessons/?s=${encodeURIComponent(title)}`; }
-function geniusLink(title, artist) { return `https://genius.com/search?q=${encodeURIComponent(title + ' ' + artist)}`; }
-
-// Chord-availability check removed — CORS proxies are unreliable on many
-// networks. The ChordButton now just links out to chord sites unconditionally.
-
 // ─── LocalStorage ─────────────────────────────────────────────────────
 const LS = { get:(k,d)=>{ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d} }, set:(k,v)=>{ try{localStorage.setItem(k,JSON.stringify(v))}catch{} } };
 const getUsers          = ()    => LS.get("jb_users",[]);
@@ -3317,8 +3310,6 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
                 className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-all ${showChords?"bg-amber-600/20 border-amber-500/40 text-amber-400":"border-[#2e2e44] text-gray-400 hover:border-gray-500"}`}>
                 {showChords?"🎸 Chords ON":"🎸 Chords OFF"}
               </button>
-              <a href={torrinsLink(song.title)} target="_blank" rel="noopener"
-                className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-green-500 hover:text-green-400 transition-all">Torrins ↗</a>
               <div className="relative">
                 <button onClick={()=>setFolderMenu(v=>!v)} className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">📁 Add</button>
                 {showFolderMenu&&(
@@ -3366,20 +3357,6 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} collapsed={queueCollapsed} onToggleCollapse={onToggleQueueCollapse} onShuffleQueue={onShuffleQueue} onRefreshQueue={onRefreshQueue} onSortQueue={onSortQueue}/>
       )}
     </div>
-  );
-}
-
-// ─── Chord button — opens Ultimate Guitar search in a new tab ────────
-// No more pre-check via CORS proxies (they're unreliable on many networks).
-// User clicks → site opens in a new tab → they pick the chord sheet they want.
-function ChordButton({ song }) {
-  const artist = song.artist || song.singer || "";
-  return (
-    <a href={ugLink(song.title, artist)} target="_blank" rel="noopener"
-      title="Search chords on Ultimate Guitar"
-      className="text-xs px-2 py-1.5 rounded-lg bg-amber-600/20 border border-amber-500/50 text-amber-300 hover:bg-amber-600/30 transition-all font-medium whitespace-nowrap">
-      🎸<span className="hidden sm:inline"> Chords ↗</span>
-    </a>
   );
 }
 
@@ -3581,7 +3558,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 </button>
               )}
 
-              {/* Hamburger menu — Source · Edit · Chords */}
+              {/* Hamburger menu — Source · Edit */}
               <div className="relative">
                 <button onClick={()=>{setShowActionMenu(v=>!v); setFolderMenu(false);}}
                   title="More actions"
@@ -3630,15 +3607,6 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                       </div>
                     )}
 
-                    {/* Find Chords */}
-                    {!isCustomSong && (
-                      <a href={ugLink(song.title, song.artist || song.singer || "")}
-                        target="_blank" rel="noopener"
-                        onClick={()=>setShowActionMenu(false)}
-                        className="block px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/15 hover:text-amber-300 transition-all">
-                        🎸 Find Chords ↗
-                      </a>
-                    )}
                   </div>
                 )}
               </div>
@@ -3703,9 +3671,6 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                   })}
                 </div>
               ))}
-              <div className="mt-8 pt-4 border-t border-[#1a1a2a] text-xs text-gray-600 text-center">
-                Tip: Use the 🎸 button above for chord sheets.
-              </div>
             </div>
           )}
           <div className="h-16"/>
