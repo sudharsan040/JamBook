@@ -3083,7 +3083,7 @@ function matchesQueueSearch(query, song, num) {
   return (song.title || "").toLowerCase().includes(q) || (song.artist || song.singer || "").toLowerCase().includes(q);
 }
 
-function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folderId }) {
+function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folderId, canManage = true }) {
   const isVibeSlot = song.title === CURRENTLY_VIBING_TITLE;
   return (
     <div onClick={() => onOpenSong(song)}
@@ -3112,7 +3112,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
             )}
           </div>
         </div>
-        {onToggleCompleted && !isVibeSlot && (
+        {onToggleCompleted && !isVibeSlot && canManage && (
           <button
             onClick={(e) => { e.stopPropagation(); onToggleCompleted(folderId, song.id); }}
             title={song.completed ? "Mark as not completed" : "Mark as completed"}
@@ -3132,6 +3132,10 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
   const [showSpin, setShowSpin] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
   const [queueSearch, setQueueSearch] = React.useState("");
+  // Audience following someone else's live broadcast — read-only queue,
+  // just the list + the live song. Same condition already used to lock
+  // editing/source-switching elsewhere.
+  const audienceLocked = !!broadcastModerator && !isBroadcasting;
   const doRefresh = async () => {
     setRefreshing(true);
     try { await onRefreshQueue(folder.id); } finally { setRefreshing(false); }
@@ -3161,63 +3165,68 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
         <div className="text-sm font-semibold text-amber-300 truncate">📁 {folder.name}</div>
         <div className="text-xs text-gray-600 mt-0.5">{folderSongs.length} songs</div>
 
-        {/* Spin / Shuffle / Broadcast / Refresh — one strip, icon-only so all
-            four fit regardless of which ones apply (e.g. no broadcast permission). */}
-        <div className="mt-3 pt-3 border-t border-[#1a1a2a] flex items-center gap-1.5">
-          <button
-            onClick={()=>{ setShowSpin(true); if (onRefreshQueue) onRefreshQueue(folder.id); }}
-            disabled={pending.length===0}
-            title={pending.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
-            className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-            🎲
-          </button>
-          {onShuffleQueue && (
-            <button onClick={()=>onShuffleQueue(folder.id)} disabled={pending.length<2}
-              title={pending.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
-              className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              🔀
-            </button>
-          )}
-          {canBroadcast && (
-            <button onClick={isBroadcasting ? onStopBroadcast : onStartBroadcast}
-              title={isBroadcasting ? "Stop broadcasting" : "Start broadcasting — your song picks sync to everyone with this folder"}
-              className={`flex-1 text-base py-1.5 rounded-lg border transition-all ${isBroadcasting ? "bg-red-600/20 border-red-500 text-red-300 animate-pulse" : "border-red-500/40 text-red-400 hover:bg-red-600/10"}`}>
-              📡
-            </button>
-          )}
-          {onRefreshQueue && (
-            <button onClick={doRefresh} disabled={refreshing} title="Refresh — pick up songs added via a Request Songs link"
-              className={`flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
-              🔄
-            </button>
-          )}
-        </div>
-        {onSortQueue && (
-          // Same uniform icon-button style as the strip above — no text
-          // labels, just tooltips — so all four (and the top four) read as
-          // one consistent row instead of a mix of pill/chip shapes.
-          <div className="mt-1.5 flex items-center gap-1.5">
-            <button onClick={()=>onSortQueue(folder.id, "alpha")} disabled={pending.length<2}
-              title="Sort A-Z by title" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              🔤
-            </button>
-            <button onClick={()=>onSortQueue(folder.id, "votes")} disabled={pending.length<2}
-              title="Sort by votes, most-voted first" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              ❤️
-            </button>
-            {onAddCustom && (
-              <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
-                className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
-                📝
+        {/* Spin / Shuffle / Broadcast / Refresh / Sort — hidden entirely for
+            an audience member following someone else's live broadcast; they
+            get a read-only list, not session-management controls. */}
+        {!audienceLocked && (
+          <>
+            <div className="mt-3 pt-3 border-t border-[#1a1a2a] flex items-center gap-1.5">
+              <button
+                onClick={()=>{ setShowSpin(true); if (onRefreshQueue) onRefreshQueue(folder.id); }}
+                disabled={pending.length===0}
+                title={pending.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
+                className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                🎲
               </button>
+              {onShuffleQueue && (
+                <button onClick={()=>onShuffleQueue(folder.id)} disabled={pending.length<2}
+                  title={pending.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
+                  className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                  🔀
+                </button>
+              )}
+              {canBroadcast && (
+                <button onClick={isBroadcasting ? onStopBroadcast : onStartBroadcast}
+                  title={isBroadcasting ? "Stop broadcasting" : "Start broadcasting — your song picks sync to everyone with this folder"}
+                  className={`flex-1 text-base py-1.5 rounded-lg border transition-all ${isBroadcasting ? "bg-red-600/20 border-red-500 text-red-300 animate-pulse" : "border-red-500/40 text-red-400 hover:bg-red-600/10"}`}>
+                  📡
+                </button>
+              )}
+              {onRefreshQueue && (
+                <button onClick={doRefresh} disabled={refreshing} title="Refresh — pick up songs added via a Request Songs link"
+                  className={`flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 ${refreshing?"animate-spin":""}`}>
+                  🔄
+                </button>
+              )}
+            </div>
+            {onSortQueue && (
+              // Same uniform icon-button style as the strip above — no text
+              // labels, just tooltips — so all four (and the top four) read as
+              // one consistent row instead of a mix of pill/chip shapes.
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <button onClick={()=>onSortQueue(folder.id, "alpha")} disabled={pending.length<2}
+                  title="Sort A-Z by title" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                  🔤
+                </button>
+                <button onClick={()=>onSortQueue(folder.id, "votes")} disabled={pending.length<2}
+                  title="Sort by votes, most-voted first" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                  ❤️
+                </button>
+                {onAddCustom && (
+                  <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
+                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                    📝
+                  </button>
+                )}
+                {canBroadcast && onThankYou && (
+                  <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
+                    className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
+                    🙏
+                  </button>
+                )}
+              </div>
             )}
-            {canBroadcast && onThankYou && (
-              <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
-                className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
-                🙏
-              </button>
-            )}
-          </div>
+          </>
         )}
         {canBroadcast && isBroadcasting && (
           <div className="flex items-center justify-center gap-1.5 mt-1.5 text-xs text-red-300">
@@ -3244,7 +3253,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
         {visiblePending.map(({song,i})=>(
           <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
-            onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id}/>
+            onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id} canManage={!audienceLocked}/>
         ))}
         {visibleCompleted.length > 0 && (
           <>
@@ -3253,7 +3262,7 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
             </div>
             {visibleCompleted.map(({song,i})=>(
               <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
-                onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id}/>
+                onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id} canManage={!audienceLocked}/>
             ))}
           </>
         )}
@@ -3523,8 +3532,9 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               </div>
 
               {/* Mark this song completed (only when viewing a song inside a folder) —
-                  not for the Currently Vibing scratch slot, it's never "done" */}
-              {activeFolder && onToggleCompleted && song.title !== CURRENTLY_VIBING_TITLE && (
+                  not for the Currently Vibing scratch slot, it's never "done", and
+                  not for an audience member following someone else's broadcast */}
+              {activeFolder && onToggleCompleted && song.title !== CURRENTLY_VIBING_TITLE && !(broadcastModerator && !isBroadcasting) && (
                 <button onClick={()=>onToggleCompleted(activeFolder.id, song.id)}
                   title={song.completed ? "Mark as not completed" : "Mark as completed"}
                   className={`text-xs px-2 py-1.5 rounded-lg border transition-all ${song.completed ? "bg-emerald-600/20 border-emerald-600/40 text-emerald-400" : "border-[#2e2e44] text-gray-400 hover:border-emerald-500 hover:text-emerald-400"}`}>
@@ -3697,59 +3707,65 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               <button onClick={()=>setShowQueue(false)} className="text-gray-500 hover:text-white text-xl">✕</button>
             </div>
             <div className="px-4 py-2.5 border-b border-[#1a1a2a]">
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={()=>{ setShowSpin(true); if (onRefreshQueue) onRefreshQueue(activeFolder.id); }}
-                  disabled={pendingQueueSongs.length===0}
-                  title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
-                  className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                  🎲
-                </button>
-                {onShuffleQueue && (
-                  <button onClick={()=>onShuffleQueue(activeFolder.id)} disabled={pendingQueueSongs.length<2}
-                    title={pendingQueueSongs.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
-                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                    🔀
-                  </button>
-                )}
-                {canBroadcast && (
-                  <button onClick={isBroadcasting ? onStopBroadcast : ()=>{onStartBroadcast(); setShowQueue(false);}}
-                    title={isBroadcasting ? "Stop broadcasting" : "Start broadcasting"}
-                    className={`flex-1 text-base py-1.5 rounded-lg border transition-all ${isBroadcasting ? "bg-red-600/20 border-red-500 text-red-300 animate-pulse" : "border-red-500/40 text-red-400 hover:bg-red-600/10"}`}>
-                    📡
-                  </button>
-                )}
-                {onRefreshQueue && (
-                  <button onClick={()=>onRefreshQueue(activeFolder.id)}
-                    title="Refresh — pick up songs added via a Request Songs link"
-                    className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
-                    🔄
-                  </button>
-                )}
-              </div>
-              {onSortQueue && (
-                <div className="mt-1.5 flex items-center gap-1.5">
-                  <button onClick={()=>onSortQueue(activeFolder.id, "alpha")} disabled={pendingQueueSongs.length<2}
-                    title="Sort A-Z by title" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                    🔤
-                  </button>
-                  <button onClick={()=>onSortQueue(activeFolder.id, "votes")} disabled={pendingQueueSongs.length<2}
-                    title="Sort by votes, most-voted first" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                    ❤️
-                  </button>
-                  {onAddCustom && (
-                    <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
-                      className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
-                      📝
+              {/* Hidden entirely for an audience member following someone
+                  else's live broadcast — read-only list, no management. */}
+              {!(broadcastModerator && !isBroadcasting) && (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={()=>{ setShowSpin(true); if (onRefreshQueue) onRefreshQueue(activeFolder.id); }}
+                      disabled={pendingQueueSongs.length===0}
+                      title={pendingQueueSongs.length===0 ? "No active songs left to spin" : "Spin to pick what's next"}
+                      className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                      🎲
                     </button>
+                    {onShuffleQueue && (
+                      <button onClick={()=>onShuffleQueue(activeFolder.id)} disabled={pendingQueueSongs.length<2}
+                        title={pendingQueueSongs.length<2 ? "Need at least 2 active songs to shuffle" : "Shuffle song order and renumber 1..N"}
+                        className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                        🔀
+                      </button>
+                    )}
+                    {canBroadcast && (
+                      <button onClick={isBroadcasting ? onStopBroadcast : ()=>{onStartBroadcast(); setShowQueue(false);}}
+                        title={isBroadcasting ? "Stop broadcasting" : "Start broadcasting"}
+                        className={`flex-1 text-base py-1.5 rounded-lg border transition-all ${isBroadcasting ? "bg-red-600/20 border-red-500 text-red-300 animate-pulse" : "border-red-500/40 text-red-400 hover:bg-red-600/10"}`}>
+                        📡
+                      </button>
+                    )}
+                    {onRefreshQueue && (
+                      <button onClick={()=>onRefreshQueue(activeFolder.id)}
+                        title="Refresh — pick up songs added via a Request Songs link"
+                        className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                        🔄
+                      </button>
+                    )}
+                  </div>
+                  {onSortQueue && (
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <button onClick={()=>onSortQueue(activeFolder.id, "alpha")} disabled={pendingQueueSongs.length<2}
+                        title="Sort A-Z by title" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                        🔤
+                      </button>
+                      <button onClick={()=>onSortQueue(activeFolder.id, "votes")} disabled={pendingQueueSongs.length<2}
+                        title="Sort by votes, most-voted first" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                        ❤️
+                      </button>
+                      {onAddCustom && (
+                        <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
+                          className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                          📝
+                        </button>
+                      )}
+                      {canBroadcast && onThankYou && (
+                        <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
+                          className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
+                          🙏
+                        </button>
+                      )}
+                    </div>
                   )}
-                  {canBroadcast && onThankYou && (
-                    <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
-                      className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
-                      🙏
-                    </button>
-                  )}
-                </div>
+                </>
               )}
               {canBroadcast && isBroadcasting && (
                 <div className="flex items-center justify-center gap-1.5 mt-1.5 text-xs text-red-300">
@@ -3791,7 +3807,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                           </div>
                         </div>
                       </div>
-                      {onToggleCompleted && !isVibeSlot && (
+                      {onToggleCompleted && !isVibeSlot && !(broadcastModerator && !isBroadcasting) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onToggleCompleted(activeFolder.id, s.id); }}
                           title={s.completed ? "Mark as not completed" : "Mark as completed"}
@@ -4214,6 +4230,10 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
     setRefreshing(true);
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
+  // Audience following someone else's live broadcast — read-only list, no
+  // session-management controls (same condition used to lock editing
+  // elsewhere in LiveSongView/FolderQueuePanel).
+  const audienceLocked = !!broadcastModerator && !isBroadcasting;
   // "Currently Vibing" pinned first — display order only, each song keeps
   // its real position number (i) from the underlying array.
   const orderedSongs = React.useMemo(() => {
@@ -4268,7 +4288,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             </button>
           )}
 
-          {onRefresh && (
+          {!audienceLocked && onRefresh && (
             <button onClick={doRefresh} disabled={refreshing}
               title="Refresh — pick up songs added via a Request Songs link"
               className={`text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all flex-shrink-0 disabled:opacity-50 ${refreshing?"animate-spin":""}`}>
@@ -4276,7 +4296,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             </button>
           )}
 
-          {HAS_SUPABASE && (
+          {!audienceLocked && HAS_SUPABASE && (
             <button onClick={()=>setShowRequestLink(true)}
               title="Get a link for the audience to request songs — no account needed"
               className="text-xs px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/10 transition-all flex-shrink-0">
@@ -4284,11 +4304,13 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             </button>
           )}
 
-          <button onClick={onAddCustom}
-            title="Add your own lyrics"
-            className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all flex-shrink-0">
-            ＋ <span className="hidden sm:inline">Add</span> Lyrics
-          </button>
+          {!audienceLocked && (
+            <button onClick={onAddCustom}
+              title="Add your own lyrics"
+              className="text-xs px-3 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all flex-shrink-0">
+              ＋ <span className="hidden sm:inline">Add</span> Lyrics
+            </button>
+          )}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-5 space-y-2 sm:space-y-3">
@@ -4324,8 +4346,10 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
                 <button onClick={()=>onEditSong(song)} title="Edit lyrics"
                   className="text-gray-600 hover:text-amber-400 text-sm px-1.5 transition-all">✎</button>
               )}
-              <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
-                className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
+              {!audienceLocked && (
+                <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
+                  className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
+              )}
             </div>
           </div>
         ))}
