@@ -3513,23 +3513,26 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
             </div>
             {/* Top-bar action buttons — desktop + mobile share the same layout now */}
             <div className="flex gap-1.5 flex-shrink-0" onClick={e=>e.stopPropagation()}>
-              {/* Add to folder */}
-              <div className="relative">
-                <button onClick={()=>{setFolderMenu(v=>!v); setShowActionMenu(false);}}
-                  title="Add to folder"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">📁<span className="hidden sm:inline ml-1">Add</span></button>
-                {showFolderMenu && (
-                  <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
-                    {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
-                    {folders.map(f=>(
-                      <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setFolderMenu(false);}}
-                        className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 first:rounded-t-xl last:rounded-b-xl transition-all">
-                        📁 {f.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Add to folder — hidden for an audience member following
+                  someone else's live broadcast */}
+              {!(broadcastModerator && !isBroadcasting) && (
+                <div className="relative">
+                  <button onClick={()=>{setFolderMenu(v=>!v); setShowActionMenu(false);}}
+                    title="Add to folder"
+                    className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">📁<span className="hidden sm:inline ml-1">Add</span></button>
+                  {showFolderMenu && (
+                    <div className="absolute right-0 top-full mt-1 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl shadow-xl z-50 min-w-44">
+                      {folders.length===0 && <div className="px-4 py-3 text-xs text-gray-500">No folders yet.</div>}
+                      {folders.map(f=>(
+                        <button key={f.id} onClick={()=>{onAddToFolder(f.id,song);setFolderMenu(false);}}
+                          className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 first:rounded-t-xl last:rounded-b-xl transition-all">
+                          📁 {f.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Mark this song completed (only when viewing a song inside a folder) —
                   not for the Currently Vibing scratch slot, it's never "done", and
