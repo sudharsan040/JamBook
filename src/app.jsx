@@ -2055,6 +2055,7 @@ function archiveCustomSongs(songs) {
   if (!Array.isArray(songs)) return;
   for (const s of songs) {
     if (!s || (!s.customLyrics && !s.customLyricsRoman)) continue;
+    if (s.title === CURRENTLY_VIBING_TITLE) continue; // scratch slot — never archived
     archiveSong(s, { native: s.customLyrics, roman: s.customLyricsRoman, source: "custom" });
   }
 }
@@ -5880,15 +5881,17 @@ function App() {
     updated = await db.mutateFolderSongs(user, folder, mutate);
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
 
-    archiveSong(
-      { title: data.title, artist: data.artist, album: data.album },
-      { native: data.customLyrics, roman: data.customLyricsRoman, source: "custom" }
-    );
+    // The "Currently Vibing" scratch slot is overwritten in place on every
+    // save, so neither song_archive nor All Songs ever get it — either
+    // would just freeze a stale snapshot under a generic title that never
+    // reflects whatever's actually in the slot by the time it's read back.
+    if (data.title !== CURRENTLY_VIBING_TITLE) {
+      archiveSong(
+        { title: data.title, artist: data.artist, album: data.album },
+        { native: data.customLyrics, roman: data.customLyricsRoman, source: "custom" }
+      );
+    }
 
-    // Skip the "Currently Vibing" scratch slot — it's reused/overwritten in
-    // place, so a first sync would just freeze a stale, generically-titled
-    // snapshot in All Songs that never reflects later edits (All Songs never
-    // overwrites an already-locked-in entry).
     if (folder.name !== ALL_SONGS_NAME && data.title !== CURRENTLY_VIBING_TITLE) {
       const syncedSong = song
         ? updated.songs.find(s => s.id === song.id)
