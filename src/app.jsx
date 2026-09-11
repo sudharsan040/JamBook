@@ -3136,6 +3136,12 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
   // just the list + the live song. Same condition already used to lock
   // editing/source-switching elsewhere.
   const audienceLocked = !!broadcastModerator && !isBroadcasting;
+  // Queue number of whatever song is currently live, for the moderator
+  // indicator below — same numbering as the rows (raw index in
+  // folderSongs + 1), null for the unnumbered Currently Vibing slot.
+  const activeSongIdx = folderSongs.findIndex(s => s.id === activeSongId);
+  const activeSongNumber = activeSongIdx >= 0 && folderSongs[activeSongIdx].title !== CURRENTLY_VIBING_TITLE
+    ? activeSongIdx + 1 : null;
   const doRefresh = async () => {
     setRefreshing(true);
     try { await onRefreshQueue(folder.id); } finally { setRefreshing(false); }
@@ -3240,7 +3246,10 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           <div className="mt-3 pt-3 border-t border-[#1a1a2a]">
             <div className="flex items-center gap-1.5 text-xs text-red-300">
               <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
-              <span className="truncate">📡 {broadcastModerator.name}</span>
+              <span className="truncate flex-1">📡 {broadcastModerator.name}</span>
+              {activeSongNumber && (
+                <span className="flex-shrink-0 text-amber-400 font-semibold">#{activeSongNumber}</span>
+              )}
             </div>
           </div>
         )}
@@ -3482,6 +3491,12 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [showSourceMenu, setShowSourceMenu] = React.useState(false);
   const hasQueue = activeFolder && folderSongs && folderSongs.length > 0;
   const pendingQueueSongs = hasQueue ? partitionCompleted(folderSongs).pending : [];
+  // Queue number of the song currently open, for the "X is live" indicator —
+  // same numbering as the queue rows (raw index in folderSongs + 1), null
+  // for the unnumbered Currently Vibing slot.
+  const liveSongIdx = hasQueue ? folderSongs.findIndex(s => s.id === song.id) : -1;
+  const liveSongNumber = liveSongIdx >= 0 && folderSongs[liveSongIdx].title !== CURRENTLY_VIBING_TITLE
+    ? liveSongIdx + 1 : null;
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -3779,7 +3794,10 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               {!canBroadcast && broadcastModerator && (
                 <div className="flex items-center gap-1.5 text-xs text-red-300 mt-1.5">
                   <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>
-                  <span className="truncate">📡 {broadcastModerator.name} is live</span>
+                  <span className="truncate flex-1">📡 {broadcastModerator.name} is live</span>
+                  {liveSongNumber && (
+                    <span className="flex-shrink-0 text-amber-400 font-semibold">#{liveSongNumber}</span>
+                  )}
                 </div>
               )}
             </div>
