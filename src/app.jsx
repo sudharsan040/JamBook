@@ -1219,22 +1219,13 @@ function matchSection(line) {
   return null;
 }
 
-// ── Detect chord lines (e.g. "C G Am F") ─────────────────────────────
-const CHORD_TOKEN = /^[A-G](#|b)?(m|maj|min|sus|dim|aug|add)?\d*(\/[A-G](#|b)?)?$/;
-function isChordLine(line) {
-  const tokens = line.trim().split(/\s+/);
-  if (tokens.length < 2 || tokens.length > 12) return false;
-  const chords = tokens.filter(t => CHORD_TOKEN.test(t));
-  return chords.length / tokens.length >= 0.75;
-}
-
 const TAG_BG = {
   male: "tag-male", female: "tag-female", chorus: "tag-chorus",
   duet: "tag-duet", humming: "tag-humming",
   verse: "bg-gray-700/40 text-gray-300 border border-gray-600/40",
 };
 
-// ── Parse lyrics into structured stanzas with tags + chord lines ─────
+// ── Parse lyrics into structured stanzas with vocal-section tags ─────
 // Strategy:
 //   1. If the source has explicit [Verse]/[Chorus]/[Male] markers, honor them.
 //   2. Otherwise, apply heuristics: stanzas that repeat verbatim → Chorus;
@@ -1274,7 +1265,6 @@ function parseStructured(lyrics, opts = {}) {
         if (inline.rest) lines.push({ kind: "lyric", text: inline.rest });
         continue;
       }
-      if (isChordLine(raw)) { lines.push({ kind: "chord", text: raw.trim() }); continue; }
       lines.push({ kind: "lyric", text: raw });
     }
     const bodyKey = lines.filter(l => l.kind === "lyric").map(l => l.text.toLowerCase().trim().replace(/[.,!?;:'"]/g,"")).join("|");
@@ -2464,7 +2454,6 @@ function useToast() {
 
 // ─── Atoms ────────────────────────────────────────────────────────────
 function Tag({type}) { const c=TAG_CONFIG[type]||TAG_CONFIG.chorus; return <span className={`chord-badge text-xs px-2 py-0.5 rounded-full font-semibold ${c.class}`}>{c.label}</span>; }
-function ChordBadge({chord}) { return <span className="chord-badge text-xs font-bold text-amber-400 bg-amber-900/30 border border-amber-700/40 px-2 py-0.5 rounded mr-1">{chord}</span>; }
 function Avatar({username,size=36}) {
   return <div className="avatar" style={{background:avatarColor(username),width:size,height:size,fontSize:size*.38}}>{username.charAt(0).toUpperCase()}</div>;
 }
@@ -3047,8 +3036,8 @@ function AutoScrollControl({scrollRef}) {
   );
 }
 
-// Lyrics/chords text-size stepper — for presenting on a big screen. Only
-// scales the stanza/chord text (via the --lyrics-scale CSS var), nothing else.
+// Lyrics text-size stepper — for presenting on a big screen. Only
+// scales the stanza text (via the --lyrics-scale CSS var), nothing else.
 function FontSizeControl({ scale, onChange }) {
   const idx = Math.max(0, FONT_SCALES.indexOf(scale));
   const step = (delta) => {
@@ -3106,16 +3095,20 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
           <div className="min-w-0">
             <div className={`text-xs font-semibold leading-tight truncate ${song.completed ? "line-through" : ""} ${isActive ? "text-amber-200" : "text-gray-300"}`}>{song.title}</div>
             <div className="text-xs text-gray-600 truncate mt-0.5">{song.artist || song.singer}</div>
-            <span className={`text-xs px-1.5 py-0.5 rounded-full mt-1 inline-block ${isActive ? "curated-badge" : "text-gray-600 bg-gray-800"}`}>
-              {song.type === "curated" ? "⭐ Curated" : "🎵 Live"}
-            </span>
-            {song.votes > 0 && (
-              <span title="Audience votes — upvoted songs move up the queue"
-                className="text-xs text-pink-400 ml-1">❤️ {song.votes}</span>
-            )}
-            {song.dislikes > 0 && (
-              <span title="Audience dislikes — a signal for songs to clear out"
-                className="text-xs text-orange-400 ml-1">👎 {song.dislikes}</span>
+            {(song.type === "curated" || song.votes > 0 || song.dislikes > 0) && (
+              <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                {song.type === "curated" && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full inline-block ${isActive ? "curated-badge" : "text-gray-600 bg-gray-800"}`}>⭐ Curated</span>
+                )}
+                {song.votes > 0 && (
+                  <span title="Audience votes — upvoted songs move up the queue"
+                    className="text-xs text-pink-400">❤️ {song.votes}</span>
+                )}
+                {song.dislikes > 0 && (
+                  <span title="Audience dislikes — a signal for songs to clear out"
+                    className="text-xs text-orange-400">👎 {song.dislikes}</span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -3200,25 +3193,27 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           )}
         </div>
         {onSortQueue && (
+          // Same uniform icon-button style as the strip above — no text
+          // labels, just tooltips — so all four (and the top four) read as
+          // one consistent row instead of a mix of pill/chip shapes.
           <div className="mt-1.5 flex items-center gap-1.5">
-            <span className="text-xs text-gray-600 flex-shrink-0">Sort:</span>
             <button onClick={()=>onSortQueue(folder.id, "alpha")} disabled={pending.length<2}
-              title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              🔤 A–Z
+              title="Sort A-Z by title" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              🔤
             </button>
             <button onClick={()=>onSortQueue(folder.id, "votes")} disabled={pending.length<2}
-              title="Sort by votes, most-voted first" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-              ❤️ Votes
+              title="Sort by votes, most-voted first" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              ❤️
             </button>
             {onAddCustom && (
               <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
-                className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
                 📝
               </button>
             )}
             {canBroadcast && onThankYou && (
               <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
-                className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
+                className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
                 🙏
               </button>
             )}
@@ -3276,7 +3271,6 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
 
 // ─── Curated Song View ────────────────────────────────────────────────
 function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onToggleCompleted,lyricsScale,onLyricsScaleChange,queueCollapsed,onToggleQueueCollapse,onShuffleQueue,onRefreshQueue,onSortQueue}) {
-  const [showChords,setShowChords]   = React.useState(true);
   const [script,setScript]           = React.useState("roman");
   const [showFolderMenu,setFolderMenu] = React.useState(false);
   const scrollRef = React.useRef(null);
@@ -3306,10 +3300,6 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
               <div onClick={()=>setScript("native")} className={`script-opt ${script==="native"?"active":""}`}>Native</div>
             </div>
             <div className="flex gap-2 flex-wrap justify-end">
-              <button onClick={()=>setShowChords(v=>!v)}
-                className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-all ${showChords?"bg-amber-600/20 border-amber-500/40 text-amber-400":"border-[#2e2e44] text-gray-400 hover:border-gray-500"}`}>
-                {showChords?"🎸 Chords ON":"🎸 Chords OFF"}
-              </button>
               <div className="relative">
                 <button onClick={()=>setFolderMenu(v=>!v)} className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">📁 Add</button>
                 {showFolderMenu&&(
@@ -3340,7 +3330,6 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-1" style={{"--lyrics-scale":lyricsScale}}>
           {song.lines.map(line=>(
             <div key={line.id} className="lyric-line px-3 py-2 transition-all">
-              {showChords&&<div className="mb-0.5"><ChordBadge chord={line.chord}/></div>}
               <div className="flex items-center gap-3">
                 <Tag type={line.tag}/>
                 <span className={`leading-relaxed font-medium text-gray-100 ${script==="native"?"tamil-text":""}`}
@@ -3666,7 +3655,6 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                   )}
                   {stanza.lines.map((line, j) => {
                     if (line.kind === "blank") return <div key={j} className="h-2" />;
-                    if (line.kind === "chord") return <div key={j} className="chord-line">{line.text}</div>;
                     return <div key={j} className="stanza-line">{line.text}</div>;
                   })}
                 </div>
@@ -3741,24 +3729,23 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
               </div>
               {onSortQueue && (
                 <div className="mt-1.5 flex items-center gap-1.5">
-                  <span className="text-xs text-gray-600 flex-shrink-0">Sort:</span>
                   <button onClick={()=>onSortQueue(activeFolder.id, "alpha")} disabled={pendingQueueSongs.length<2}
-                    title="Sort A-Z by title" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                    🔤 A–Z
+                    title="Sort A-Z by title" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    🔤
                   </button>
                   <button onClick={()=>onSortQueue(activeFolder.id, "votes")} disabled={pendingQueueSongs.length<2}
-                    title="Sort by votes, most-voted first" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
-                    ❤️ Votes
+                    title="Sort by votes, most-voted first" className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                    ❤️
                   </button>
                   {onAddCustom && (
                     <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
-                      className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                      className="flex-1 text-base py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
                       📝
                     </button>
                   )}
                   {canBroadcast && onThankYou && (
                     <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
-                      className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
+                      className="flex-1 text-base py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
                       🙏
                     </button>
                   )}
@@ -3980,7 +3967,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
             </div>
           )}
 
-          {/* Vocal/chord toolbar */}
+          {/* Vocal-section toolbar */}
           <div className="flex flex-wrap gap-1 pt-1">
             <span className="text-xs text-gray-600 self-center mr-1">Insert:</span>
             {["[Verse]","[Chorus]","[Male]","[Female]","[Duet]","[Humming]","[Bridge]"].map(m => (
@@ -4023,10 +4010,10 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
               rows={12}
               className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600 font-mono leading-relaxed resize-y"
               placeholder={scriptTab === "native"
-                ? `Paste native-script lyrics here...\n\nTip:\n[Chorus]   ← marks a section\n[Male]     ← Male singer\nC  G  Am   ← chord line`
+                ? `Paste native-script lyrics here...\n\nTip:\n[Chorus]   ← marks a section\n[Male]     ← Male singer`
                 : `Paste Tanglish / Roman lyrics here...\n\nUse the ↻ Auto-fill button to convert from native automatically.`} />
             <p className="text-xs text-gray-600 mt-1">
-              You can fill either or both. Markers like <code className="text-amber-400">[Chorus]</code> add vocal tags. Lines with only chord letters (<code className="text-amber-400">C G Am F</code>) render as chord rows.
+              You can fill either or both. Markers like <code className="text-amber-400">[Chorus]</code> add vocal tags.
             </p>
           </div>
         </div>

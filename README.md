@@ -1,6 +1,6 @@
 # 🎸 JamBook
 
-> **The Vibe is Here ✨** — A multilingual lyrics + chords app built for live jam sessions.
+> **The Vibe is Here ✨** — A multilingual lyrics app built for live jam sessions.
 
 JamBook is a free, ad-free, single-page web app for finding song lyrics, transliterating them into Roman script (Tanglish / Hinglish / etc.), and organising them into session folders you can share with your jam group.
 
@@ -38,7 +38,6 @@ Live demo: **https://sudharsan040.github.io/JamBook/**
 - **Edit any song** — both native script AND Tanglish, independently
 - **Auto-fill Tanglish** from native via the built-in transliterator (one-click starting point)
 - **Vocal markers** — type or insert `[Verse]`, `[Chorus]`, `[Male]`, `[Female]`, `[Duet]`, `[Bridge]` to get coloured tags
-- **Chord lines** — type chords alone on a line (`C  G  Am  F`) to render as chord rows above the lyrics
 
 ### 🎵 Performance Helpers
 - **Auto-scroll** with Slow / Medium / Fast speeds — sub-pixel accumulator for buttery slow scrolling
@@ -371,8 +370,7 @@ Things that might come next, in roughly decreasing priority:
 - **Drag-to-reorder songs** inside a folder
 - **Quick "tap to add to last folder"** — skip the dropdown on second add
 - **Performance mode** — full-screen lyrics, larger font, AMOLED black, screen-wake-lock
-- **Chord transposition** — `+1 / -1` semitones from a Capo-friendly base key
-- **Public song library** — community-uploaded curated songs with vocal tags + chords
+- **Public song library** — community-uploaded curated songs with vocal tags
 - **PWA installable** — add to home screen, offline cache
 
 Open an issue or fork freely.
