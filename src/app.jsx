@@ -3109,7 +3109,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
 
 function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
-  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue,onSortQueue,onThankYou}) {
+  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue,onSortQueue,onThankYou,onAddCustom}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -3185,6 +3185,12 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
               title="Sort by votes, most-voted first" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
               ❤️ Votes
             </button>
+            {onAddCustom && (
+              <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
+                className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                📝
+              </button>
+            )}
             {canBroadcast && onThankYou && (
               <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
                 className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
@@ -3350,7 +3356,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
-  queueCollapsed, onToggleQueueCollapse, onShuffleQueue, onRefreshQueue, onSortQueue, onThankYou}) {
+  queueCollapsed, onToggleQueueCollapse, onShuffleQueue, onRefreshQueue, onSortQueue, onThankYou, onAddCustom}) {
   const [lyricsData, setLyricsData] = React.useState(null); // {lyrics, source}
   const [loading,    setLoading]    = React.useState(true);
   const [notFound,   setNotFound]   = React.useState(false);
@@ -3688,6 +3694,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           onRefreshQueue={onRefreshQueue}
           onSortQueue={onSortQueue}
           onThankYou={onThankYou}
+          onAddCustom={onAddCustom}
         />
       )}
 
@@ -3745,6 +3752,12 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                     title="Sort by votes, most-voted first" className="flex-1 text-xs py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-pink-500/50 hover:text-pink-300 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     ❤️ Votes
                   </button>
+                  {onAddCustom && (
+                    <button onClick={onAddCustom} title="Add lyrics — quick access during a live session"
+                      className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all">
+                      📝
+                    </button>
+                  )}
                   {canBroadcast && onThankYou && (
                     <button onClick={onThankYou} title="Send a thank-you to everyone in the room"
                       className="flex-shrink-0 text-xs px-2 py-1 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-600/10 transition-all">
@@ -6196,6 +6209,7 @@ function App() {
             onRefreshQueue={refreshFolder}
             onSortQueue={sortQueueBy}
             onThankYou={sendThankYou}
+            onAddCustom={()=>openAddCustom(activeFolderId)}
           />
         )}
         {view==="folder"&&activeFolder&&(
