@@ -3127,7 +3127,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
 
 function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
-  broadcastModerator,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue,onSortQueue,onThankYou,onAddCustom}) {
+  broadcastModerator,liveBroadcastSong,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue,onSortQueue,onThankYou,onAddCustom}) {
   const { pending, completed } = partitionCompleted(folderSongs);
   const [showSpin, setShowSpin] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -3136,12 +3136,14 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
   // just the list + the live song. Same condition already used to lock
   // editing/source-switching elsewhere.
   const audienceLocked = !!broadcastModerator && !isBroadcasting;
-  // Queue number of whatever song is currently live, for the moderator
-  // indicator below — same numbering as the rows (raw index in
-  // folderSongs + 1), null for the unnumbered Currently Vibing slot.
-  const activeSongIdx = folderSongs.findIndex(s => s.id === activeSongId);
-  const activeSongNumber = activeSongIdx >= 0 && folderSongs[activeSongIdx].title !== CURRENTLY_VIBING_TITLE
-    ? activeSongIdx + 1 : null;
+  // Queue number of whatever the MODERATOR currently has live (not
+  // necessarily activeSongId — I may be browsing elsewhere while they keep
+  // broadcasting), for the moderator indicator below. Same numbering as
+  // the rows (raw index in folderSongs + 1), null for the unnumbered
+  // Currently Vibing slot.
+  const liveSongIdx = liveBroadcastSong ? folderSongs.findIndex(s => s.id === liveBroadcastSong.id) : -1;
+  const activeSongNumber = liveSongIdx >= 0 && folderSongs[liveSongIdx].title !== CURRENTLY_VIBING_TITLE
+    ? liveSongIdx + 1 : null;
   const doRefresh = async () => {
     setRefreshing(true);
     try { await onRefreshQueue(folder.id); } finally { setRefreshing(false); }
@@ -3369,7 +3371,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
 function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,onToggleCompleted,
-  isBroadcasting, broadcastModerator, followingBroadcast, onLeaveBroadcast,
+  isBroadcasting, broadcastModerator, liveBroadcastSong, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
   queueCollapsed, onToggleQueueCollapse, onShuffleQueue, onRefreshQueue, onSortQueue, onThankYou, onAddCustom}) {
@@ -3491,10 +3493,12 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [showSourceMenu, setShowSourceMenu] = React.useState(false);
   const hasQueue = activeFolder && folderSongs && folderSongs.length > 0;
   const pendingQueueSongs = hasQueue ? partitionCompleted(folderSongs).pending : [];
-  // Queue number of the song currently open, for the "X is live" indicator —
-  // same numbering as the queue rows (raw index in folderSongs + 1), null
-  // for the unnumbered Currently Vibing slot.
-  const liveSongIdx = hasQueue ? folderSongs.findIndex(s => s.id === song.id) : -1;
+  // Queue number of whatever the MODERATOR currently has live, for the
+  // "X is live" indicator — not necessarily the song I'm looking at (I may
+  // have clicked Leave and be browsing elsewhere). Same numbering as the
+  // queue rows (raw index in folderSongs + 1), null for the unnumbered
+  // Currently Vibing slot.
+  const liveSongIdx = hasQueue && liveBroadcastSong ? folderSongs.findIndex(s => s.id === liveBroadcastSong.id) : -1;
   const liveSongNumber = liveSongIdx >= 0 && folderSongs[liveSongIdx].title !== CURRENTLY_VIBING_TITLE
     ? liveSongIdx + 1 : null;
 
@@ -3702,6 +3706,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
           onStopBroadcast={onStopBroadcast}
           viewerCount={viewerCount}
           broadcastModerator={broadcastModerator}
+          liveBroadcastSong={liveBroadcastSong}
           collapsed={queueCollapsed}
           onToggleCollapse={onToggleQueueCollapse}
           onShuffleQueue={onShuffleQueue}
@@ -5364,6 +5369,12 @@ function App() {
   // followingBroadcast: I'm an audience member auto-switching when moderator does
   const [isBroadcasting, setIsBroadcasting] = React.useState(false);
   const [broadcastModerator, setBroadcastModerator] = React.useState(null);
+  // The song the MODERATOR currently has live — tracked independently of
+  // activeSong/view, which reflect whatever THIS device is looking at (it
+  // can differ once someone clicks Leave and browses elsewhere while the
+  // broadcast continues). Used for the "#N" queue-number shown next to the
+  // 📡 moderator indicator, so it's always the broadcaster's song, not mine.
+  const [liveBroadcastSong, setLiveBroadcastSong] = React.useState(null);
   const [followingBroadcast, setFollowingBroadcast] = React.useState(false);
   const [viewerCount, setViewerCount] = React.useState(0);
   const [pendingBroadcastId, setPendingBroadcastId] = React.useState(null);
@@ -6030,6 +6041,7 @@ function App() {
         if (modEntry) {
           const justDiscovered = !broadcastModeratorRef.current;
           setBroadcastModerator({ name: modEntry.name || "Someone" });
+          if (modEntry.song) setLiveBroadcastSong(modEntry.song); // keep fresh on every sync
           if (justDiscovered && modEntry.song) {
             cacheSong(modEntry.song);
             setActiveSong(modEntry.song);
@@ -6038,6 +6050,7 @@ function App() {
           }
         } else if (broadcastModeratorRef.current) {
           setBroadcastModerator(null);
+          setLiveBroadcastSong(null);
           setFollowingBroadcast(false);
         }
       })
@@ -6046,11 +6059,16 @@ function App() {
       })
       .on("broadcast", { event: "moderator_stop" }, () => {
         setBroadcastModerator(null);
+        setLiveBroadcastSong(null);
         setFollowingBroadcast(false);
       })
       .on("broadcast", { event: "song_change" }, ({ payload }) => {
         // Audience receives: cache lyrics if provided, then open the song
         if (!payload?.song) return;
+        // Tracks what the moderator is actually playing, independent of
+        // whether I (isBroadcastingRef false and followingBroadcast false,
+        // e.g. after clicking Leave) auto-follow it below.
+        setLiveBroadcastSong(payload.song);
         if (payload.cachedLyrics) {
           try { setCachedLyrics(payload.song.id, payload.cachedLyrics); } catch {}
         }
@@ -6102,6 +6120,7 @@ function App() {
       try { sb.removeChannel(channel); } catch {}
       broadcastChannelRef.current = null;
       setBroadcastModerator(null);
+      setLiveBroadcastSong(null);
       setFollowingBroadcast(false);
       setViewerCount(0);
       setSubscribedRoom(null);
@@ -6275,6 +6294,7 @@ function App() {
             onToggleCompleted={toggleSongCompleted}
             isBroadcasting={isBroadcasting}
             broadcastModerator={broadcastModerator}
+            liveBroadcastSong={liveBroadcastSong}
             followingBroadcast={followingBroadcast}
             onLeaveBroadcast={leaveBroadcast}
             canBroadcast={canBroadcast}
