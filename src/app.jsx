@@ -3852,7 +3852,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 // independently. Tab switcher above the textarea controls which one is shown.
 function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsFolderPick }) {
   const isEdit = mode === "edit";
-  const [title,    setTitle]    = React.useState(initialSong?.title    || "");
+  // A brand-new quick-add always gets the same fixed title — this is the
+  // live-session scratch slot (see the 📝 queue-panel button), not meant to
+  // be individually named each time. Editing an existing song keeps its
+  // real, editable title untouched.
+  const [title,    setTitle]    = React.useState(initialSong?.title    || (isEdit ? "" : "Currently Vibing"));
   const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
   const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
   const [language, setLanguage] = React.useState(initialSong?.language || "Tamil");
@@ -3916,51 +3920,64 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e=>e.stopPropagation()} style={{width:"min(560px, 95vw)"}}>
-        <div className="flex items-center justify-between mb-4">
+      {/* Own layout instead of the shared .modal-box (which scrolls as one
+          block) — Save needs to stay visible without scrolling past it, so
+          the box is a flex column with a scrolling middle and a footer that
+          never moves. */}
+      <div className="flex flex-col rounded-2xl border border-[#2e2e44] bg-[#13131e]"
+        onClick={e=>e.stopPropagation()} style={{width:"min(560px, 95vw)", maxHeight:"90vh"}}>
+        <div className="flex items-center justify-between px-7 pt-7 pb-4 flex-shrink-0">
           <h3 className="text-base font-bold text-white">{isEdit ? "Edit Lyrics" : "Add Your Own Song"}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3 overflow-y-auto px-7 pb-5" style={{minHeight:0}}>
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Title <span className="text-red-400">*</span></label>
-            <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus={!isEdit}
-              className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
-              placeholder="Song title" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-gray-400 font-medium mb-1 block">Singer</label>
-              <input value={artist} onChange={e=>setArtist(e.target.value)}
+            <label className="text-xs text-gray-400 font-medium mb-1 block">Title {isEdit && <span className="text-red-400">*</span>}</label>
+            {isEdit ? (
+              <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus
                 className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
-                placeholder="Optional" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 font-medium mb-1 block">Movie / Album</label>
-              <input value={album} onChange={e=>setAlbum(e.target.value)}
-                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
-                placeholder="Optional" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-gray-400 font-medium mb-1 block">Language</label>
-              <select value={language} onChange={e=>setLanguage(e.target.value)}
-                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
-                {LANGUAGES.filter(l => l !== "All").map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-            </div>
-            {needsFolderPick && (
-              <div>
-                <label className="text-xs text-gray-400 font-medium mb-1 block">Save to folder <span className="text-red-400">*</span></label>
-                <select value={pickedFolderId || ""} onChange={e=>setPickedFolderId(e.target.value)}
-                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
-                  {(folders || []).map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
-                </select>
+                placeholder="Song title" />
+            ) : (
+              <div className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-amber-300 text-sm font-medium">
+                🎶 {title}
               </div>
             )}
           </div>
+          {isEdit && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-400 font-medium mb-1 block">Singer</label>
+                  <input value={artist} onChange={e=>setArtist(e.target.value)}
+                    className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
+                    placeholder="Optional" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 font-medium mb-1 block">Movie / Album</label>
+                  <input value={album} onChange={e=>setAlbum(e.target.value)}
+                    className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
+                    placeholder="Optional" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 font-medium mb-1 block">Language</label>
+                <select value={language} onChange={e=>setLanguage(e.target.value)}
+                  className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
+                  {LANGUAGES.filter(l => l !== "All").map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+            </>
+          )}
+          {needsFolderPick && (
+            <div>
+              <label className="text-xs text-gray-400 font-medium mb-1 block">Save to folder <span className="text-red-400">*</span></label>
+              <select value={pickedFolderId || ""} onChange={e=>setPickedFolderId(e.target.value)}
+                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm">
+                {(folders || []).map(f => <option key={f.id} value={f.id}>📁 {f.name}</option>)}
+              </select>
+            </div>
+          )}
 
           {/* Vocal/chord toolbar */}
           <div className="flex flex-wrap gap-1 pt-1">
@@ -4009,9 +4026,10 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
               You can fill either or both. Markers like <code className="text-amber-400">[Chorus]</code> add vocal tags. Lines with only chord letters (<code className="text-amber-400">C G Am F</code>) render as chord rows.
             </p>
           </div>
+        </div>
 
-          {err && <p className="text-red-400 text-xs">{err}</p>}
-
+        <div className="px-7 py-4 flex-shrink-0 border-t border-[#2e2e44]">
+          {err && <p className="text-red-400 text-xs mb-2">{err}</p>}
           <button onClick={save}
             className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold transition-all">
             {isEdit ? "Save Edits" : "Add Song"}
