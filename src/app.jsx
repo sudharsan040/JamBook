@@ -2250,8 +2250,11 @@ const db = {
 
   async getFolders(user) {
     if (HAS_SUPABASE) {
+      // Explicit column list, not select("*") — costs nothing today but
+      // avoids silently pulling any future column we don't map below.
       const { data, error } = await sb.from("folders")
-        .select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+        .select("id,name,songs,share_token,request_token,request_cap,request_cap_per_user,broadcast_room,original_owner_id,original_owner_name")
+        .eq("user_id", user.id).order("created_at", { ascending: false });
       if (error) { console.error(error); return []; }
       return data.map(r => ({
         id: r.id, name: r.name,
@@ -4907,14 +4910,15 @@ function RequestSongPage({ token }) {
     refreshFolder();
     // Poll so the "already added" list stays fresh as other people in the
     // audience request songs too — no realtime channel for this bare page.
-    // Each poll pulls the folder's full songs payload (including lyrics
-    // text), so this is real bandwidth per open tab — kept slow (30s, was
-    // 10s) and, more importantly, paused entirely while the tab isn't
-    // visible (someone leaving this open in a background tab all evening
-    // was costing egress for no benefit; refreshes once immediately when
-    // they switch back instead).
+    // Each poll hits the folder_songs_slim RPC (no lyrics text, just
+    // id/title/artist/etc. per song), but it still runs once per open tab
+    // — with a request link handed to a whole room that adds up, so it's
+    // kept slow (45s, was 10s then 30s) and, more importantly, paused
+    // entirely while the tab isn't visible (someone leaving this open in a
+    // background tab all evening was costing egress for no benefit;
+    // refreshes once immediately when they switch back instead).
     let id = null;
-    const start = () => { if (!id) id = setInterval(refreshFolder, 30000); };
+    const start = () => { if (!id) id = setInterval(refreshFolder, 45000); };
     const stop  = () => { if (id) { clearInterval(id); id = null; } };
     const onVisibility = () => {
       if (document.visibilityState === "visible") { refreshFolder(); start(); }
@@ -5320,11 +5324,17 @@ function App() {
         }
       }
       setFolders(fs || []);
+      // Backfill the archive from any songs that already carry custom
+      // lyrics — cheap (a write, no read back) and keeps shared-folder
+      // imports well-stocked. Deliberately NOT calling preFetchFolderSongs
+      // here for every song in every folder: that used to fire a live/
+      // archive lookup for the user's entire library on every single login,
+      // most of it for folders they might never open this session — a real
+      // Supabase-egress driver (each archive hit returns full lyrics text).
+      // Prefetching is now scoped to just the folder someone actually opens
+      // (see selectFolder), so cost scales with what's actually used.
       const allSongs = (fs || []).flatMap(f => f.songs || []);
-      if (allSongs.length) {
-        archiveCustomSongs(allSongs);
-        preFetchFolderSongs(allSongs).catch(() => {});
-      }
+      if (allSongs.length) archiveCustomSongs(allSongs);
       // Quietly fold in anything All Songs is missing — e.g. songs added via
       // a Request Songs link since this device last loaded. No toast, no
       // button; this is the "no manual trigger" half of keeping it in sync.
@@ -5712,7 +5722,19 @@ function App() {
     } catch {}
   };
 
-  const selectFolder = id => { setActiveFolderId(id); setView("folder"); };
+  // Warms the lyrics cache for a folder's songs the first time it's actually
+  // opened this session — scoped per-folder (not the whole library at once,
+  // see the login effect above) so egress scales with what's actually used.
+  const prefetchedFoldersRef = React.useRef(new Set());
+  const selectFolder = id => {
+    setActiveFolderId(id);
+    setView("folder");
+    if (id && !prefetchedFoldersRef.current.has(id)) {
+      prefetchedFoldersRef.current.add(id);
+      const f = folders.find(x => x.id === id);
+      if (f) preFetchFolderSongs(f.songs || []).catch(() => {});
+    }
+  };
 
   // ─── Custom-lyrics state ──────────────────────────────────────────
   // editorState: { mode: "new"|"edit", folderId, song? }
