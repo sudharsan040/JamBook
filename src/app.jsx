@@ -16,6 +16,12 @@ const AVATAR_COLORS = ["#7c3aed","#0891b2","#059669","#d97706","#db2777","#dc262
 // first and visually distinct wherever folders are listed.
 const ALL_SONGS_NAME = "All Songs";
 
+// The fixed title of the live-session scratch song behind the 📝 quick-add
+// button (see LyricsEditorModal / openAddCustom) — there's only ever one
+// per folder (reused/overwritten in place, not a new entry each time), and
+// it's always pinned to the top of that folder's song list.
+const CURRENTLY_VIBING_TITLE = "Currently Vibing";
+
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
 // `process.env.SUPABASE_URL` / `SUPABASE_KEY` are LITERAL references that
 // esbuild replaces at build time via build.mjs `define:`.
@@ -3056,9 +3062,16 @@ function FontSizeControl({ scale, onChange }) {
 // ─── Queue Panel ──────────────────────────────────────────────────────
 // Split a folder's songs into {pending, completed}, keeping each song's
 // ORIGINAL position (i) so the number badge stays stable across both groups.
+// The "Currently Vibing" scratch song is always pinned first within
+// whichever group it lands in — display order only, `i` (and so its number
+// badge) still reflects its real position in the folder.
 function partitionCompleted(songs) {
   const indexed = songs.map((song, i) => ({ song, i }));
-  return { pending: indexed.filter(x => !x.song.completed), completed: indexed.filter(x => x.song.completed) };
+  const pinFirst = (a, b) => (b.song.title === CURRENTLY_VIBING_TITLE) - (a.song.title === CURRENTLY_VIBING_TITLE);
+  return {
+    pending:   indexed.filter(x => !x.song.completed).sort(pinFirst),
+    completed: indexed.filter(x =>  x.song.completed).sort(pinFirst),
+  };
 }
 
 // Queue search — matches by exact queue number OR a substring of the title/artist.
@@ -3856,7 +3869,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
   // live-session scratch slot (see the 📝 queue-panel button), not meant to
   // be individually named each time. Editing an existing song keeps its
   // real, editable title untouched.
-  const [title,    setTitle]    = React.useState(initialSong?.title    || (isEdit ? "" : "Currently Vibing"));
+  const [title,    setTitle]    = React.useState(initialSong?.title    || (isEdit ? "" : CURRENTLY_VIBING_TITLE));
   const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
   const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
   const [language, setLanguage] = React.useState(initialSong?.language || "Tamil");
@@ -3994,27 +4007,29 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
             <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
               <label className="text-xs text-gray-400 font-medium">
                 Lyrics <span className="text-red-400">*</span>
-                <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>
+                {isEdit && <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>}
               </label>
-              <div className="flex items-center gap-2">
-                {scriptTab === "roman" && nativeLyrics.trim() && (
-                  <button type="button" onClick={autoFillTanglish} disabled={autoFillBusy}
-                    title="Auto-fill from native lyrics (Google romanization for any Indic script)"
-                    className="text-xs text-amber-400 hover:text-amber-300 underline-offset-2 hover:underline disabled:opacity-50 disabled:cursor-wait">
-                    {autoFillBusy ? "Translating…" : "↻ Auto-fill"}
-                  </button>
-                )}
-                <div className="script-toggle">
-                  <div onClick={()=>setScriptTab("native")}
-                    className={`script-opt ${scriptTab==="native"?"active":""}`}>
-                    Native {nativeLyrics.trim() && <span className="text-green-400 ml-0.5">●</span>}
-                  </div>
-                  <div onClick={()=>setScriptTab("roman")}
-                    className={`script-opt ${scriptTab==="roman"?"active":""}`}>
-                    Tanglish {romanLyrics.trim() && <span className="text-green-400 ml-0.5">●</span>}
+              {isEdit && (
+                <div className="flex items-center gap-2">
+                  {scriptTab === "roman" && nativeLyrics.trim() && (
+                    <button type="button" onClick={autoFillTanglish} disabled={autoFillBusy}
+                      title="Auto-fill from native lyrics (Google romanization for any Indic script)"
+                      className="text-xs text-amber-400 hover:text-amber-300 underline-offset-2 hover:underline disabled:opacity-50 disabled:cursor-wait">
+                      {autoFillBusy ? "Translating…" : "↻ Auto-fill"}
+                    </button>
+                  )}
+                  <div className="script-toggle">
+                    <div onClick={()=>setScriptTab("native")}
+                      className={`script-opt ${scriptTab==="native"?"active":""}`}>
+                      Native {nativeLyrics.trim() && <span className="text-green-400 ml-0.5">●</span>}
+                    </div>
+                    <div onClick={()=>setScriptTab("roman")}
+                      className={`script-opt ${scriptTab==="roman"?"active":""}`}>
+                      Tanglish {romanLyrics.trim() && <span className="text-green-400 ml-0.5">●</span>}
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
             <textarea ref={lyricsRef} value={currentLyrics} onChange={e=>setCurrentLyrics(e.target.value)}
               rows={12}
@@ -4224,6 +4239,13 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
     setRefreshing(true);
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
+  // "Currently Vibing" pinned first — display order only, each song keeps
+  // its real position number (i) from the underlying array.
+  const orderedSongs = React.useMemo(() => {
+    const indexed = songs.map((song, i) => ({ song, i }));
+    indexed.sort((a, b) => (b.song.title === CURRENTLY_VIBING_TITLE) - (a.song.title === CURRENTLY_VIBING_TITLE));
+    return indexed;
+  }, [songs]);
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
@@ -4301,8 +4323,8 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
             <p>No songs yet. Search & add, or tap <span className="text-amber-400 font-semibold">+ Add Lyrics</span> to add your own.</p>
           </div>
         )}
-        {songs.map((song,i)=>(
-          <div key={song.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0">
+        {orderedSongs.map(({song,i})=>(
+          <div key={song.id} className={`flex items-center justify-between gap-2 bg-[#1a1a2e] border rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0 ${song.title === CURRENTLY_VIBING_TITLE ? "border-amber-500/50" : "border-[#2e2e44]"}`}>
             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
               <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
               <div className="min-w-0 flex-1">
@@ -5772,8 +5794,16 @@ function App() {
   const [editorState, setEditorState] = React.useState(null);
 
   const openAddCustom = (folderId) => {
-    // folderId may be null when invoked from home page → modal will show picker
-    setEditorState({ mode: "new", folderId });
+    // folderId may be null when invoked from home page → modal will show picker.
+    // Reuse the folder's existing "Currently Vibing" scratch song if there is
+    // one — this is a single reusable slot, not a fresh entry every time (see
+    // CURRENTLY_VIBING_TITLE). Only the id/type carry over (not its lyrics
+    // text), so the modal still opens with a blank textarea ready to paste
+    // into, but saving updates that same song instead of adding another.
+    const folder = folderId ? folders.find(f => f.id === folderId) : null;
+    const existing = folder?.songs.find(s => s.title === CURRENTLY_VIBING_TITLE);
+    const song = existing ? { id: existing.id, type: existing.type, title: existing.title } : null;
+    setEditorState({ mode: "new", folderId, song });
   };
   // Edit handler — prefills BOTH the native and roman textareas so the user
   // doesn't have to start from scratch in either script.
@@ -5818,13 +5848,19 @@ function App() {
     // Decided against whatever song list it's applied to (fresh from the DB
     // at persist time, not necessarily this device's local `folder.songs`)
     // so a concurrent add from someone else can't get clobbered by this save.
+    //
+    // Whether this is an in-place update now turns on whether we HAVE a
+    // `song` reference at all (not on `mode`) — a quick-add reusing the
+    // existing "Currently Vibing" scratch slot is mode "new" but still an
+    // update, exactly like editing a song from search keeps its original
+    // id/cover rather than minting a fresh custom-song id.
     const mutate = songs => {
       const idx = song ? songs.findIndex(s => s.id === song.id) : -1;
-      if (mode === "edit" && idx >= 0) {
+      if (song && idx >= 0) {
         return songs.map(s => s.id === song.id ? { ...s, ...patch } : s);
       }
-      const baseSong = song && mode === "edit"
-        ? { ...song, ...patch }   // editing a song from search — keep its iTunes id/cover
+      const baseSong = song
+        ? { ...song, ...patch }
         : { id: newCustomId, type: "custom", ...patch };
       return [...songs, baseSong];
     };
@@ -5833,7 +5869,7 @@ function App() {
     // view of the folder (existingIndex) just to decide the toast wording.
     let updated = { ...folder, songs: mutate(folder.songs) };
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
-    if (mode === "edit" && existingIndex >= 0) {
+    if (song && existingIndex >= 0) {
       if (activeSong && activeSong.id === song.id) setActiveSong({ ...activeSong, ...patch });
       showToast(`Lyrics saved`);
     } else {
@@ -5849,8 +5885,12 @@ function App() {
       { native: data.customLyrics, roman: data.customLyricsRoman, source: "custom" }
     );
 
-    if (folder.name !== ALL_SONGS_NAME) {
-      const syncedSong = (mode === "edit" && song)
+    // Skip the "Currently Vibing" scratch slot — it's reused/overwritten in
+    // place, so a first sync would just freeze a stale, generically-titled
+    // snapshot in All Songs that never reflects later edits (All Songs never
+    // overwrites an already-locked-in entry).
+    if (folder.name !== ALL_SONGS_NAME && data.title !== CURRENTLY_VIBING_TITLE) {
+      const syncedSong = song
         ? updated.songs.find(s => s.id === song.id)
         : updated.songs[updated.songs.length - 1];
       if (syncedSong) syncSongToAllSongs(syncedSong, folders.map(x => x.id === folderId ? updated : x));
@@ -5858,7 +5898,7 @@ function App() {
 
     // If I'm broadcasting on this folder, push the lyrics edit to followers
     if (isBroadcasting && broadcastChannelRef.current && activeFolderId === folderId) {
-      const targetId = (mode === "edit" && song) ? song.id : updated.songs[updated.songs.length - 1].id;
+      const targetId = song ? song.id : updated.songs[updated.songs.length - 1].id;
       broadcastChannelRef.current.send({
         type: "broadcast",
         event: "lyrics_update",
