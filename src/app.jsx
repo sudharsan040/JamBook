@@ -4385,10 +4385,11 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
 }
 
 // ─── Search Page ──────────────────────────────────────────────────────
-function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onRenameFolder,onStartBroadcast}) {
+function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCreateFolder,onShareFolder,onLogout,onAddCustomLyrics,onOpenSettings,onDeleteFolder,onRenameFolder,onStartBroadcast,showToast,onPersistRequestToken,onPersistRequestCaps}) {
   const username = user.username;
   const [query,setQuery]              = React.useState("");
   const [filterBy,setFilterBy]        = React.useState("title");
+  const [requestLinkFolder, setRequestLinkFolder] = React.useState(null);
   const [language, setLanguage]       = React.useState("Tamil"); // default Tamil per request
   const [creatingFolder,setCreating]  = React.useState(false);
   const [newFolderName,setNewName]    = React.useState("");
@@ -4739,6 +4740,13 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
                             className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/20 hover:text-amber-300 transition-all">
                             ↗ Share
                           </button>
+                          {HAS_SUPABASE && (
+                            <button
+                              onClick={()=>{setRequestLinkFolder(f); setOpenFolderMenu(null);}}
+                              className="w-full text-left px-4 py-2.5 text-sm text-emerald-400 hover:bg-emerald-500/15 transition-all border-t border-[#2e2e44]">
+                              🎤 Request Songs
+                            </button>
+                          )}
                           {onStartBroadcast && (
                             <button
                               onClick={()=>{onStartBroadcast(f.id); setOpenFolderMenu(null);}}
@@ -4826,6 +4834,11 @@ function SearchPage({onOpenSong,folders,onAddToFolder,user,onSelectFolder,onCrea
       {/* Mobile-fixed search at bottom — thumb-reach */}
       {isMobile && (
         <div className="mobile-search-bar">{searchInput}</div>
+      )}
+
+      {requestLinkFolder && (
+        <RequestLinkModal folder={requestLinkFolder} onClose={()=>setRequestLinkFolder(null)}
+          showToast={showToast} onPersistRequestToken={onPersistRequestToken} onPersistRequestCaps={onPersistRequestCaps}/>
       )}
     </div>
   );
@@ -6266,7 +6279,7 @@ function App() {
       )}
       <main className="flex-1 overflow-hidden flex flex-col min-w-0">
         {view==="search"&&(
-          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onRenameFolder={renameFolder} onStartBroadcast={requestStartBroadcast}/>
+          <SearchPage onOpenSong={openSong} folders={folders} onAddToFolder={addToFolder} user={user} onSelectFolder={selectFolder} onCreateFolder={createFolder} onShareFolder={setShareTarget} onLogout={logout} onAddCustomLyrics={()=>openAddCustom(null)} onOpenSettings={()=>setShowSettings(true)} onDeleteFolder={deleteFolder} onRenameFolder={renameFolder} onStartBroadcast={requestStartBroadcast} showToast={showToast} onPersistRequestToken={persistRequestToken} onPersistRequestCaps={persistRequestCaps}/>
         )}
         {view==="song"&&activeSong&&activeSong.type==="curated"&&(
           <CuratedSongView
