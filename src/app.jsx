@@ -4169,48 +4169,31 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" style={{width: 320}} onClick={e => e.stopPropagation()}>
+      <div className="modal-box" style={{width: 360}} onClick={e => e.stopPropagation()}>
         <div className="flex flex-col items-center">
           <div className="w-full flex items-center justify-between mb-3">
             <div className="text-lg font-bold text-white">📼 Spin the Tape</div>
             <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
           </div>
 
-          <svg width="220" height="132" viewBox="0 0 200 120">
-            {/* Shell */}
-            <rect x="2" y="2" width="196" height="116" rx="9" fill="#17172a" stroke="#3a3a54" strokeWidth="2"/>
-            {/* Corner screws */}
-            {[[11,11],[189,11],[11,109],[189,109]].map(([x,y]) => (
-              <circle key={`${x}-${y}`} cx={x} cy={y} r="2.2" fill="#0d0d18" stroke="#4b4b6b" strokeWidth="1"/>
-            ))}
-            {/* Label sticker */}
-            <rect x="16" y="9" width="168" height="24" rx="3" fill="#ece7d6"/>
-            <rect x="16" y="9" width="168" height="4" fill="#d97706"/>
-            <rect x="24" y="21" width="70" height="3" rx="1.5" fill="#8a8570"/>
-            <rect x="24" y="27" width="44" height="2.5" rx="1.25" fill="#b3ae98"/>
-            {/* Tape window */}
-            <rect x="24" y="39" width="152" height="58" rx="5" fill="#0a0a14" stroke="#2e2e44" strokeWidth="1.5"/>
-            <line x1="70" y1="68" x2="130" y2="68" stroke="#3a3a54" strokeWidth="1.5"/>
-            {[70, 130].map(reelX => (
-              <g key={reelX}>
-                {/* wound-tape roll (static) */}
-                <circle cx={reelX} cy="68" r="18" fill="#5c3a1e" opacity="0.9"/>
-                <circle cx={reelX} cy="68" r="18" fill="none" stroke="#3a2513" strokeWidth="1"/>
-                {/* spoked hub (spins) */}
-                <g style={{transformOrigin: `${reelX}px 68px`, animation: spinning ? "cassetteSpin .25s linear infinite" : "none"}}>
-                  <circle cx={reelX} cy="68" r="9" fill="#1a1a2e" stroke="#55556f" strokeWidth="1.5"/>
-                  {[0,60,120,180,240,300].map(a => (
-                    <line key={a} x1={reelX} y1="68"
-                      x2={reelX + 7*Math.cos(a*Math.PI/180)} y2={68 + 7*Math.sin(a*Math.PI/180)}
-                      stroke="#55556f" strokeWidth="1.5"/>
-                  ))}
-                  <circle cx={reelX} cy="68" r="2.5" fill="#0a0a14" stroke="#d97706" strokeWidth="1.5"/>
-                </g>
+          <svg width="280" height="170" viewBox="0 0 280 170">
+            <rect x="3" y="3" width="274" height="164" rx="14" fill="#1a1a2e" stroke="#3a3a54" strokeWidth="2"/>
+            <rect x="20" y="20" width="240" height="88" rx="6" fill="#0d0d18" stroke="#2e2e44" strokeWidth="1.5"/>
+            <line x1="100" y1="64" x2="180" y2="64" stroke="#3a3a54" strokeWidth="2"/>
+            {[100, 180].map(reelX => (
+              <g key={reelX} style={{transformOrigin: `${reelX}px 64px`, animation: spinning ? "cassetteSpin .25s linear infinite" : "none"}}>
+                <circle cx={reelX} cy="64" r="24" fill="none" stroke="#4b4b6b" strokeWidth="2"/>
+                {[0,60,120,180,240,300].map(a => (
+                  <line key={a} x1={reelX} y1="64"
+                    x2={reelX + 17*Math.cos(a*Math.PI/180)} y2={64 + 17*Math.sin(a*Math.PI/180)}
+                    stroke="#4b4b6b" strokeWidth="2"/>
+                ))}
+                <circle cx={reelX} cy="64" r="7" fill="#0d0d18" stroke="#d97706" strokeWidth="2"/>
               </g>
             ))}
-            {/* Capstan holes */}
-            <circle cx="82" cy="105" r="3" fill="#0a0a14" stroke="#3a3a54" strokeWidth="1.5"/>
-            <circle cx="118" cy="105" r="3" fill="#0a0a14" stroke="#3a3a54" strokeWidth="1.5"/>
+            <rect x="115" y="120" width="50" height="12" rx="3" fill="#2a2a3e"/>
+            <circle cx="34" cy="138" r="3.5" fill="#3a3a54"/>
+            <circle cx="246" cy="138" r="3.5" fill="#3a3a54"/>
           </svg>
 
           {/* Tape-counter readout — cycles through candidates while spinning,
