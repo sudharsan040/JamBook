@@ -3975,7 +3975,9 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
               </div>
             )}
           </div>
-          {isEdit && (
+          {/* Singer/Movie/Language don't apply to the Currently Vibing
+              scratch slot — Title + Lyrics only, however it's reached. */}
+          {isEdit && title !== CURRENTLY_VIBING_TITLE && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -4010,24 +4012,26 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
             </div>
           )}
 
-          {/* Vocal-section toolbar */}
-          <div className="flex flex-wrap gap-1 pt-1">
-            <span className="text-xs text-gray-600 self-center mr-1">Insert:</span>
-            {["[Verse]","[Chorus]","[Male]","[Female]","[Duet]","[Humming]","[Bridge]"].map(m => (
-              <button key={m} type="button" onClick={()=>insertAtCursor(m)}
-                className="text-xs px-2 py-0.5 rounded-md border border-[#2a2a3e] text-gray-400 hover:border-amber-500 hover:text-amber-400">
-                {m}
-              </button>
-            ))}
-          </div>
+          {/* Vocal-section toolbar — not for Currently Vibing either */}
+          {title !== CURRENTLY_VIBING_TITLE && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              <span className="text-xs text-gray-600 self-center mr-1">Insert:</span>
+              {["[Verse]","[Chorus]","[Male]","[Female]","[Duet]","[Humming]","[Bridge]"].map(m => (
+                <button key={m} type="button" onClick={()=>insertAtCursor(m)}
+                  className="text-xs px-2 py-0.5 rounded-md border border-[#2a2a3e] text-gray-400 hover:border-amber-500 hover:text-amber-400">
+                  {m}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div>
             <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
               <label className="text-xs text-gray-400 font-medium">
                 Lyrics <span className="text-red-400">*</span>
-                {isEdit && <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>}
+                {isEdit && title !== CURRENTLY_VIBING_TITLE && <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>}
               </label>
-              {isEdit && (
+              {isEdit && title !== CURRENTLY_VIBING_TITLE && (
                 <div className="flex items-center gap-2">
                   {scriptTab === "roman" && nativeLyrics.trim() && (
                     <button type="button" onClick={autoFillTanglish} disabled={autoFillBusy}
