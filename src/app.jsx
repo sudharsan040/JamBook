@@ -2531,6 +2531,8 @@ function ThankYouOverlay({ onClose, canClose }) {
           <h3 className="text-lg font-bold text-white mb-2">Thank You!</h3>
           <p className="text-sm text-gray-300 mb-1 leading-relaxed">{line}</p>
           <p className="text-xs text-gray-500 mb-6">Keep the rhythm going</p>
+          <img src="insta-qr.jpeg" alt="Scan to follow on Instagram" draggable="false"
+            className="w-28 h-28 mx-auto mb-4 rounded-lg bg-white p-1.5 select-none"/>
           <a href="https://www.instagram.com/thatrubberband/" target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white text-sm font-semibold hover:opacity-90 transition-all">
             Follow us on Instagram
