@@ -4097,10 +4097,11 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
 
   const [numberInputs, setNumberInputs] = React.useState(["", "", "", "", ""]);
   const [showNames, setShowNames]     = React.useState(false); // hidden by default — keep the pick a surprise while spinning
-  const [rotation, setRotation]       = React.useState(0);
   const [spinning, setSpinning]       = React.useState(false);
   const [winner, setWinner]           = React.useState(null);
-  const pendingWinnerRef = React.useRef(null);
+  const [displayIdx, setDisplayIdx]   = React.useState(0); // which song the tape counter is currently showing
+  const spinTimerRef = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(spinTimerRef.current), []); // stop the cycle if the modal closes mid-spin
 
   // Map each song's displayed queue number back to the song itself, so typed
   // numbers resolve to the right song regardless of completed songs being
@@ -4135,40 +4136,35 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
   const canSpin      = pool.length > 0;
   const selectedSongs = pool;
   const n = selectedSongs.length || 1;
-  const segAngle = 360 / n;
 
+  // Cassette reels spin continuously (CSS) the whole time `spinning` is
+  // true; the "landing" moment is the tape-counter readout below them
+  // rapidly cycling through candidates, slowing down, and settling on the
+  // pre-chosen winner — same idea as the old wheel's wedges, just recast
+  // as a tape counter instead of a pointer stopping on a segment.
   const startSpin = () => {
     if (!canSpin || spinning) return;
     setWinner(null);
-    const winnerIndex = Math.floor(Math.random() * n);
-    const midAngle    = winnerIndex * segAngle + segAngle / 2;
-    const currentMod  = ((rotation % 360) + 360) % 360;
-    const desiredMod  = (360 - midAngle) % 360;
-    let delta = desiredMod - currentMod;
-    if (delta < 0) delta += 360;
-    pendingWinnerRef.current = selectedSongs[winnerIndex];
     setSpinning(true);
-    setRotation(r => r + 4 * 360 + delta); // a few full spins + land on winner
-  };
-
-  const handleTransitionEnd = (e) => {
-    if (e.propertyName !== "transform" || !spinning) return;
-    setSpinning(false);
-    const w = pendingWinnerRef.current;
-    setWinner(w);
-    if (w) setTimeout(() => onOpenSong(w), 500);
-  };
-
-  const size = 190, cx = size / 2, cy = size / 2, r = size / 2 - 6;
-  const polarToCartesian = (angleDeg) => {
-    const rad = (angleDeg - 90) * Math.PI / 180;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-  };
-  const wedgePath = (startAngle, endAngle) => {
-    const start = polarToCartesian(endAngle);
-    const end   = polarToCartesian(startAngle);
-    const largeArc = endAngle - startAngle <= 180 ? 0 : 1;
-    return `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArc} 0 ${end.x} ${end.y} Z`;
+    const winnerIndex = Math.floor(Math.random() * n);
+    let idx = displayIdx, elapsed = 0, delay = 70;
+    const totalDuration = 2000;
+    const tick = () => {
+      idx = (idx + 1) % n;
+      setDisplayIdx(idx);
+      elapsed += delay;
+      delay = Math.min(delay * 1.18, 320); // ease out — starts fast, slows down
+      if (elapsed < totalDuration) {
+        spinTimerRef.current = setTimeout(tick, delay);
+      } else {
+        setDisplayIdx(winnerIndex);
+        setSpinning(false);
+        const w = selectedSongs[winnerIndex];
+        setWinner(w);
+        if (w) setTimeout(() => onOpenSong(w), 500);
+      }
+    };
+    spinTimerRef.current = setTimeout(tick, delay);
   };
 
   return (
@@ -4176,32 +4172,40 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
       <div className="modal-box" style={{width: 360}} onClick={e => e.stopPropagation()}>
         <div className="flex flex-col items-center">
           <div className="w-full flex items-center justify-between mb-3">
-            <div className="text-lg font-bold text-white">🎡 Spin the Wheel</div>
+            <div className="text-lg font-bold text-white">📼 Spin the Tape</div>
             <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
           </div>
 
-          <div className="relative" style={{width: size, height: size}}>
-            <div className="absolute left-1/2 -top-1 -translate-x-1/2 z-10"
-              style={{width: 0, height: 0, borderLeft: "10px solid transparent", borderRight: "10px solid transparent", borderTop: "16px solid #f9a8d4"}}/>
-            <svg width={size} height={size}
-              style={{transform: `rotate(${rotation}deg)`, transition: "transform 2s cubic-bezier(.15,.65,.15,1)"}}
-              onTransitionEnd={handleTransitionEnd}>
-              {selectedSongs.map((s, i) => {
-                const start = i * segAngle, end = (i + 1) * segAngle;
-                const mid   = start + segAngle / 2;
-                const labelPos = polarToCartesian(mid);
-                const lx = cx + (labelPos.x - cx) * 0.6, ly = cy + (labelPos.y - cy) * 0.6;
-                return (
-                  <g key={s.id}>
-                    <path d={wedgePath(start, end)} fill={AVATAR_COLORS[i % AVATAR_COLORS.length]} stroke="#0d0d18" strokeWidth="2"/>
-                    <text x={lx} y={ly} fill="white" fontSize={showNames ? "10" : "14"} fontWeight="700" textAnchor="middle" dominantBaseline="middle">
-                      {showNames ? (s.title || "").slice(0, 12) : `#${songToNumber[s.id]}`}
-                    </text>
-                  </g>
-                );
-              })}
-              <circle cx={cx} cy={cy} r="10" fill="#0d0d18" stroke="#d97706" strokeWidth="2"/>
-            </svg>
+          <svg width="280" height="170" viewBox="0 0 280 170">
+            <rect x="3" y="3" width="274" height="164" rx="14" fill="#1a1a2e" stroke="#3a3a54" strokeWidth="2"/>
+            <rect x="20" y="20" width="240" height="88" rx="6" fill="#0d0d18" stroke="#2e2e44" strokeWidth="1.5"/>
+            <line x1="100" y1="64" x2="180" y2="64" stroke="#3a3a54" strokeWidth="2"/>
+            {[100, 180].map(reelX => (
+              <g key={reelX} style={{transformOrigin: `${reelX}px 64px`, animation: spinning ? "cassetteSpin .25s linear infinite" : "none"}}>
+                <circle cx={reelX} cy="64" r="24" fill="none" stroke="#4b4b6b" strokeWidth="2"/>
+                {[0,60,120,180,240,300].map(a => (
+                  <line key={a} x1={reelX} y1="64"
+                    x2={reelX + 17*Math.cos(a*Math.PI/180)} y2={64 + 17*Math.sin(a*Math.PI/180)}
+                    stroke="#4b4b6b" strokeWidth="2"/>
+                ))}
+                <circle cx={reelX} cy="64" r="7" fill="#0d0d18" stroke="#d97706" strokeWidth="2"/>
+              </g>
+            ))}
+            <rect x="115" y="120" width="50" height="12" rx="3" fill="#2a2a3e"/>
+            <circle cx="34" cy="138" r="3.5" fill="#3a3a54"/>
+            <circle cx="246" cy="138" r="3.5" fill="#3a3a54"/>
+          </svg>
+
+          {/* Tape-counter readout — cycles through candidates while spinning,
+              slowing down and settling on the winner (the "landing" moment). */}
+          <div className="mt-3 w-full bg-black rounded-lg border border-[#2e2e44] px-4 py-2.5 text-center">
+            <span className="font-mono text-lg font-bold text-amber-400 tracking-wider">
+              {(() => {
+                const shown = selectedSongs[Math.min(displayIdx, n - 1)]; // clamp — pool can shrink between renders
+                if (!shown) return "—";
+                return showNames ? (shown.title || "").slice(0, 20) : `#${songToNumber[shown.id]}`;
+              })()}
+            </span>
           </div>
 
           {winner ? (
