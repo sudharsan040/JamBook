@@ -2526,7 +2526,7 @@ function ThankYouOverlay({ onClose, canClose }) {
           <h3 className="text-lg font-bold text-white mb-2">We See You Vibing!</h3>
           <p className="text-sm text-gray-300 mb-6 leading-relaxed">Front row, back row, doesn't matter — you're all in it together.</p>
           <img src="insta-qr.jpeg" alt="Scan to follow on Instagram" draggable="false"
-            className="w-28 h-28 mx-auto mb-4 rounded-lg bg-white p-1.5 select-none"/>
+            className="w-40 h-40 mx-auto mb-4 rounded-lg bg-white p-2 select-none"/>
           <a href="https://www.instagram.com/thatrubberband/" target="_blank" rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-amber-500 to-orange-600 text-white text-sm font-semibold hover:opacity-90 transition-all">
             Follow us on Instagram
