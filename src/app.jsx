@@ -30,7 +30,7 @@ function makeCurrentlyVibingSong() {
     id: "cs_" + (window.crypto?.randomUUID?.() || (Date.now() + "-" + Math.random().toString(36).slice(2, 8))),
     type: "custom",
     title: CURRENTLY_VIBING_TITLE,
-    artist: "Unknown", album: "", language: "Tamil",
+    artist: "", album: "", language: "Tamil",
     customLyrics: "", customLyricsRoman: "",
   };
 }
@@ -3090,7 +3090,9 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
           <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive ? "text-amber-400" : "text-gray-700"}`}>{isVibeSlot ? "📌" : i + 1}</span>
           <div className="min-w-0">
             <div className={`text-xs font-semibold leading-tight truncate ${song.completed ? "line-through" : ""} ${isActive ? "text-amber-200" : "text-gray-300"}`}>{song.title}</div>
-            <div className="text-xs text-gray-600 truncate mt-0.5">{song.artist || song.singer}</div>
+            {(song.artist || song.singer) && (
+              <div className="text-xs text-gray-600 truncate mt-0.5">{song.artist || song.singer}</div>
+            )}
             {(song.type === "curated" || song.votes > 0 || song.dislikes > 0) && (
               <div className="flex items-center flex-wrap gap-1.5 mt-1">
                 {song.type === "curated" && (
@@ -3519,7 +3521,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 )}
               </h1>
               <div className="text-xs text-gray-500 truncate">
-                🎤 {song.artist}
+                {song.artist && `🎤 ${song.artist}`}
                 {broadcastModerator && followingBroadcast && (
                   <span className="ml-2 text-red-400">· Following {broadcastModerator.name}</span>
                 )}
@@ -3560,11 +3562,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 </button>
               )}
 
-              {/* Share folder (only when viewing a song inside a folder) */}
-              {activeFolder && onShareFolder && (
-                <button onClick={()=>onShareFolder(activeFolder)}
-                  title="Share this folder"
-                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">↗<span className="hidden sm:inline ml-1">Share</span></button>
+              {/* Edit Lyrics — hidden for followers of an active broadcast */}
+              {onEditSong && !(broadcastModerator && !isBroadcasting) && (
+                <button onClick={()=>onEditSong(song, displayText || lyricsData?.lyrics || "")}
+                  title="Edit lyrics"
+                  className="text-xs px-2 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500 hover:text-amber-400 transition-all">✎<span className="hidden sm:inline ml-1">Edit</span></button>
               )}
 
               {/* Session queue (mobile only) */}
@@ -3575,7 +3577,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 </button>
               )}
 
-              {/* Hamburger menu — Source · Edit */}
+              {/* Hamburger menu — Source · Share */}
               <div className="relative">
                 <button onClick={()=>{setShowActionMenu(v=>!v); setFolderMenu(false);}}
                   title="More actions"
@@ -3609,11 +3611,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                       🏷️ Guess section tags
                     </label>
 
-                    {/* Edit Lyrics — hidden for followers of an active broadcast */}
-                    {onEditSong && !(broadcastModerator && !isBroadcasting) && (
-                      <button onClick={()=>{onEditSong(song, displayText || lyricsData?.lyrics || ""); setShowActionMenu(false);}}
+                    {/* Share folder (only when viewing a song inside a folder) */}
+                    {activeFolder && onShareFolder && (
+                      <button onClick={()=>{onShareFolder(activeFolder); setShowActionMenu(false);}}
                         className="w-full text-left px-4 py-2.5 text-sm text-gray-300 hover:bg-amber-600/15 hover:text-amber-300 transition-all border-b border-[#2e2e44]">
-                        ✎ Edit Lyrics
+                        ↗ Share
                       </button>
                     )}
 
@@ -3935,7 +3937,10 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
     if (needsFolderPick && !pickedFolderId)            { setErr("Pick a folder to save into."); return; }
     onSave({
       title:              title.trim(),
-      artist:             artist.trim() || "Unknown",
+      // The Currently Vibing scratch slot has no artist field (hidden for
+      // new songs) — leave it blank instead of defaulting to "Unknown",
+      // there's nothing to show in the song list either way.
+      artist:             artist.trim() || (title.trim() === CURRENTLY_VIBING_TITLE ? "" : "Unknown"),
       album:              album.trim()  || "",
       language:           language,
       customLyrics:       nativeLyrics,
@@ -4345,14 +4350,16 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
         {orderedSongs.map(({song,i})=>(
           <div key={song.id} className={`flex items-center justify-between gap-2 bg-[#1a1a2e] border rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0 ${song.title === CURRENTLY_VIBING_TITLE ? "border-amber-500/50" : "border-[#2e2e44]"}`}>
             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
-              <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
+              <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{song.title === CURRENTLY_VIBING_TITLE ? "📌" : i+1}</span>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-white truncate text-sm sm:text-base">
                   {song.title}
                   {song.type === "custom" && <span className="ml-1.5 text-xs text-amber-400">●</span>}
                   {song.customLyrics && song.type !== "custom" && <span className="ml-1.5 text-xs text-amber-400">✎</span>}
                 </div>
-                <div className="text-xs text-gray-400 truncate">{song.artist||song.singer}</div>
+                {(song.artist || song.singer) && (
+                  <div className="text-xs text-gray-400 truncate">{song.artist||song.singer}</div>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
