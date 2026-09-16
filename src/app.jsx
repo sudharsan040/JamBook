@@ -2504,17 +2504,12 @@ function ShareLoadingSplash() {
   );
 }
 
-// Cute overlay the host can beam out to everyone in the room — thanks the
-// crowd, faded favicon mark in the background, Instagram follow CTA. Stays
-// up until the HOST closes it (which closes it for everyone); audience
-// members get no close control of their own, no auto-dismiss timer.
-const THANK_YOU_LINES = [
-  "For singing along, clapping off-beat, and making every chorus louder than the last.",
-  "For every request, every sing-along, every encore that wasn't in the setlist.",
-  "For being the reason this jam felt like a show.",
-];
+// Cute overlay the host can beam out to everyone in the room — mid-session
+// safe wording (not a "goodbye" line), faded favicon mark in the
+// background, Instagram follow CTA. Stays up until the HOST closes it
+// (which closes it for everyone); audience members get no close control
+// of their own, no auto-dismiss timer.
 function ThankYouOverlay({ onClose, canClose }) {
-  const [line] = React.useState(() => THANK_YOU_LINES[Math.floor(Math.random() * THANK_YOU_LINES.length)]);
   return (
     <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/80 backdrop-blur-sm px-6"
       onClick={canClose ? onClose : undefined}>
@@ -2528,9 +2523,8 @@ function ThankYouOverlay({ onClose, canClose }) {
         <div className="relative">
           <img src="logo.png" alt="RubberBand" draggable="false"
             className="w-40 mx-auto mb-4 select-none"/>
-          <h3 className="text-lg font-bold text-white mb-2">Thank You!</h3>
-          <p className="text-sm text-gray-300 mb-1 leading-relaxed">{line}</p>
-          <p className="text-xs text-gray-500 mb-6">Keep the rhythm going</p>
+          <h3 className="text-lg font-bold text-white mb-2">We See You Vibing!</h3>
+          <p className="text-sm text-gray-300 mb-6 leading-relaxed">Front row, back row, doesn't matter — you're all in it together.</p>
           <img src="insta-qr.jpeg" alt="Scan to follow on Instagram" draggable="false"
             className="w-28 h-28 mx-auto mb-4 rounded-lg bg-white p-1.5 select-none"/>
           <a href="https://www.instagram.com/thatrubberband/" target="_blank" rel="noopener noreferrer"
