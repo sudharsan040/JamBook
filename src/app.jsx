@@ -2314,7 +2314,7 @@ const db = {
   },
 
   async updateFolder(user, folder) {
-    if (user?.isGuest) return; // no-op for guests
+    if (user?.isGuest) return { ok: true }; // no-op for guests
     if (HAS_SUPABASE) {
       const patch = {
         name:                 folder.name,
@@ -2330,11 +2330,16 @@ const db = {
       const { error } = await sb.from("folders")
         .update(patch)
         .eq("id", folder.id).eq("user_id", user.id);
-      if (error) console.error(error);
-      return;
+      // Previously swallowed silently (just a console.error) — a write that
+      // fails here (RLS, dropped connection, etc.) looked identical to a
+      // successful save: the optimistic local state already showed the new
+      // content, so nothing on screen hinted the DB never actually got it.
+      if (error) { console.error(error); return { ok: false, error }; }
+      return { ok: true };
     }
     const all = getUserFolders(user.id);
     saveUserFolders(user.id, all.map(x => x.id === folder.id ? folder : x));
+    return { ok: true };
   },
 
   // Applies `mutate` to a folder's *current* song list — fetched fresh from
@@ -2360,7 +2365,12 @@ const db = {
       if (data?.songs) base = data.songs.map(s => { const c = { ...s }; delete c._shareLyrics; return c; });
     }
     const updated = { ...folder, songs: mutate(base) };
-    await this.updateFolder(user, updated);
+    const result = await this.updateFolder(user, updated);
+    // Flag (not throw) so most callers keep working unchanged — they just
+    // store whatever comes back into local state either way. The one
+    // caller that actually checks this (saveLyricsEdit) can warn instead of
+    // claiming success when the write didn't really land.
+    if (!result.ok) updated._persistFailed = true;
     return updated;
   },
 
@@ -5861,9 +5871,15 @@ function App() {
   // the id/type carry over (not its lyrics text), so the modal still opens
   // with a blank textarea ready to paste into, but saving updates that same
   // song instead of adding another. Simplified Title+Lyrics-only form.
-  const openQuickVibe = (folderId) => {
+  const openQuickVibe = async (folderId) => {
+    // Read fresh from the DB rather than trusting this device's local
+    // `folders` state — if that's ever stale (e.g. right after some other
+    // write), the reuse-lookup below can miss the real existing slot and
+    // create a genuine duplicate instead of updating it in place.
     const folder = folderId ? folders.find(f => f.id === folderId) : null;
-    const existing = folder?.songs.find(s => s.title === CURRENTLY_VIBING_TITLE);
+    const freshSongs = folder ? await db.getFolderSongs(user, folderId) : null;
+    const songs = freshSongs || folder?.songs || [];
+    const existing = songs.find(s => s.title === CURRENTLY_VIBING_TITLE);
     const song = existing ? { id: existing.id, type: existing.type, title: existing.title } : null;
     setEditorState({ mode: "vibe", folderId, song });
   };
@@ -5931,16 +5947,24 @@ function App() {
     // view of the folder (existingIndex) just to decide the toast wording.
     let updated = { ...folder, songs: mutate(folder.songs) };
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
-    if (song && existingIndex >= 0) {
-      if (activeSong && activeSong.id === song.id) setActiveSong({ ...activeSong, ...patch });
-      showToast(`Lyrics saved`);
-    } else {
-      if (activeSong && song && activeSong.id === song.id) setActiveSong({ ...activeSong, ...patch });
-      showToast(`Saved "${data.title}" to ${folder.name}`);
-    }
+    if (activeSong && song && activeSong.id === song.id) setActiveSong({ ...activeSong, ...patch });
 
     updated = await db.mutateFolderSongs(user, folder, mutate);
+    const persistFailed = !!updated._persistFailed;
+    delete updated._persistFailed; // internal marker — don't leak it into app state
     setFolders(f => f.map(x => x.id === folderId ? updated : x));
+
+    // Toast reflects what actually happened, not the optimistic guess —
+    // a write that fails here (RLS, dropped connection, etc.) used to show
+    // "Lyrics saved" anyway, so this edit just silently never reached the
+    // DB and the next reload/sync would show the old content again.
+    if (persistFailed) {
+      showToast("Couldn't save — check your connection and try again");
+    } else if (song && existingIndex >= 0) {
+      showToast(`Lyrics saved`);
+    } else {
+      showToast(`Saved "${data.title}" to ${folder.name}`);
+    }
 
     // The "Currently Vibing" scratch slot is overwritten in place on every
     // save, so neither song_archive nor All Songs ever get it — either
