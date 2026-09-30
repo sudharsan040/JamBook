@@ -3880,11 +3880,11 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 // independently. Tab switcher above the textarea controls which one is shown.
 function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsFolderPick }) {
   const isEdit = mode === "edit";
-  // A brand-new quick-add always gets the same fixed title — this is the
-  // live-session scratch slot (see the 📝 queue-panel button), not meant to
-  // be individually named each time. Editing an existing song keeps its
-  // real, editable title untouched.
-  const [title,    setTitle]    = React.useState(initialSong?.title    || (isEdit ? "" : CURRENTLY_VIBING_TITLE));
+  // "vibe" is the 📝 queue-panel quick-add — the Currently Vibing scratch
+  // slot, always the same fixed title, Title+Lyrics only. "new" (Settings /
+  // the folder list page's + Add Lyrics) and "edit" both get the full form.
+  const isVibe = mode === "vibe";
+  const [title,    setTitle]    = React.useState(initialSong?.title    || (isVibe ? CURRENTLY_VIBING_TITLE : ""));
   const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
   const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
   const [language, setLanguage] = React.useState(initialSong?.language || "Tamil");
@@ -3958,26 +3958,26 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
       <div className="flex flex-col rounded-2xl border border-[#2e2e44] bg-[#13131e]"
         onClick={e=>e.stopPropagation()} style={{width:"min(560px, 95vw)", maxHeight:"90vh"}}>
         <div className="flex items-center justify-between px-7 pt-7 pb-4 flex-shrink-0">
-          <h3 className="text-base font-bold text-white">{isEdit ? "Edit Lyrics" : "Add Your Own Song"}</h3>
+          <h3 className="text-base font-bold text-white">{isEdit ? "Edit Lyrics" : isVibe ? "🎶 Currently Vibing" : "Add Your Own Song"}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">✕</button>
         </div>
 
         <div className="space-y-3 overflow-y-auto px-7 pb-5" style={{minHeight:0}}>
           <div>
-            <label className="text-xs text-gray-400 font-medium mb-1 block">Title {isEdit && <span className="text-red-400">*</span>}</label>
-            {isEdit ? (
-              <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus
-                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
-                placeholder="Song title" />
-            ) : (
+            <label className="text-xs text-gray-400 font-medium mb-1 block">Title {!isVibe && <span className="text-red-400">*</span>}</label>
+            {isVibe ? (
               <div className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-amber-300 text-sm font-medium">
                 🎶 {title}
               </div>
+            ) : (
+              <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus
+                className="w-full bg-[#0d0d18] border border-[#2e2e44] rounded-lg px-3 py-2 text-white text-sm placeholder-gray-600"
+                placeholder="Song title" />
             )}
           </div>
           {/* Singer/Movie/Language don't apply to the Currently Vibing
               scratch slot — Title + Lyrics only, however it's reached. */}
-          {isEdit && title !== CURRENTLY_VIBING_TITLE && (
+          {!isVibe && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -4013,7 +4013,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
           )}
 
           {/* Vocal-section toolbar — not for Currently Vibing either */}
-          {title !== CURRENTLY_VIBING_TITLE && (
+          {!isVibe && (
             <div className="flex flex-wrap gap-1 pt-1">
               <span className="text-xs text-gray-600 self-center mr-1">Insert:</span>
               {["[Verse]","[Chorus]","[Male]","[Female]","[Duet]","[Humming]","[Bridge]"].map(m => (
@@ -4029,9 +4029,9 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
             <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
               <label className="text-xs text-gray-400 font-medium">
                 Lyrics <span className="text-red-400">*</span>
-                {isEdit && title !== CURRENTLY_VIBING_TITLE && <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>}
+                {!isVibe && <span className="text-gray-600 ml-1">({scriptTab === "native" ? "native script" : "Tanglish / Roman"})</span>}
               </label>
-              {isEdit && title !== CURRENTLY_VIBING_TITLE && (
+              {!isVibe && (
                 <div className="flex items-center gap-2">
                   {scriptTab === "roman" && nativeLyrics.trim() && (
                     <button type="button" onClick={autoFillTanglish} disabled={autoFillBusy}
@@ -4069,7 +4069,7 @@ function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsF
           {err && <p className="text-red-400 text-xs mb-2">{err}</p>}
           <button onClick={save}
             className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-semibold transition-all">
-            {isEdit ? "Save Edits" : "Add Song"}
+            {isEdit ? "Save Edits" : isVibe ? "Save" : "Add Song"}
           </button>
         </div>
       </div>
@@ -5844,17 +5844,23 @@ function App() {
   // editorState: { mode: "new"|"edit", folderId, song? }
   const [editorState, setEditorState] = React.useState(null);
 
+  // "+ Add Lyrics" (Settings, and the folder list page) — always a genuinely
+  // new custom song, full form (title/singer/movie/language/vocal tags).
   const openAddCustom = (folderId) => {
-    // folderId may be null when invoked from home page → modal will show picker.
-    // Reuse the folder's existing "Currently Vibing" scratch song if there is
-    // one — this is a single reusable slot, not a fresh entry every time (see
-    // CURRENTLY_VIBING_TITLE). Only the id/type carry over (not its lyrics
-    // text), so the modal still opens with a blank textarea ready to paste
-    // into, but saving updates that same song instead of adding another.
+    // folderId may be null when invoked from home page → modal will show picker
+    setEditorState({ mode: "new", folderId });
+  };
+  // 📝 quick-add in the queue panel — the Currently Vibing scratch slot.
+  // Reuses the folder's existing one if there is a one (a single reusable
+  // slot, not a fresh entry every time — see CURRENTLY_VIBING_TITLE); only
+  // the id/type carry over (not its lyrics text), so the modal still opens
+  // with a blank textarea ready to paste into, but saving updates that same
+  // song instead of adding another. Simplified Title+Lyrics-only form.
+  const openQuickVibe = (folderId) => {
     const folder = folderId ? folders.find(f => f.id === folderId) : null;
     const existing = folder?.songs.find(s => s.title === CURRENTLY_VIBING_TITLE);
     const song = existing ? { id: existing.id, type: existing.type, title: existing.title } : null;
-    setEditorState({ mode: "new", folderId, song });
+    setEditorState({ mode: "vibe", folderId, song });
   };
   // Edit handler — prefills BOTH the native and roman textareas so the user
   // doesn't have to start from scratch in either script.
@@ -6329,7 +6335,7 @@ function App() {
             onRefreshQueue={refreshFolder}
             onSortQueue={sortQueueBy}
             onThankYou={sendThankYou}
-            onAddCustom={()=>openAddCustom(activeFolderId)}
+            onAddCustom={()=>openQuickVibe(activeFolderId)}
           />
         )}
         {view==="folder"&&activeFolder&&(
