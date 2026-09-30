@@ -3880,10 +3880,15 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 // independently. Tab switcher above the textarea controls which one is shown.
 function LyricsEditorModal({ initialSong, mode, onSave, onClose, folders, needsFolderPick }) {
   const isEdit = mode === "edit";
-  // "vibe" is the 📝 queue-panel quick-add — the Currently Vibing scratch
-  // slot, always the same fixed title, Title+Lyrics only. "new" (Settings /
-  // the folder list page's + Add Lyrics) and "edit" both get the full form.
-  const isVibe = mode === "vibe";
+  // Currently Vibing gets the simplified Title+Lyrics-only form regardless
+  // of how the editor was reached: mode "vibe" (the 📝 queue-panel
+  // quick-add) covers creating/reusing it fresh, and checking the song
+  // being edited covers reopening it via the ✎ Edit Lyrics button (mode
+  // "edit") once it's an existing song. Keyed off initialSong (not the
+  // live `title` state below) so retyping the title mid-edit doesn't
+  // toggle fields on/off. Genuine new songs and edits of anything else
+  // still get the full form.
+  const isVibe = mode === "vibe" || initialSong?.title === CURRENTLY_VIBING_TITLE;
   const [title,    setTitle]    = React.useState(initialSong?.title    || (isVibe ? CURRENTLY_VIBING_TITLE : ""));
   const [artist,   setArtist]   = React.useState(initialSong?.artist   || "");
   const [album,    setAlbum]    = React.useState(initialSong?.album    || "");
