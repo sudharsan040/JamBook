@@ -5964,6 +5964,12 @@ function App() {
           event: "lyrics_update",
           payload: { songId: vibeSong.id, patch: { customLyrics: vibeSong.customLyrics, customLyricsRoman: vibeSong.customLyricsRoman } },
         });
+        // Also refresh the presence payload — otherwise someone joining the
+        // broadcast AFTER this edit (but before the next song change) would
+        // catch up to the pre-edit content via the stale cached song there.
+        broadcastChannelRef.current.track({
+          username: user?.username || "viewer", broadcasting: true, name: user?.username, song: vibeSong,
+        });
       }
       showToast("Lyrics saved");
       setEditorState(null);
