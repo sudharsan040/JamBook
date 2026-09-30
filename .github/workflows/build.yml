@@ -57,6 +57,17 @@ jobs:
           CORS_PROXY_URL: ${{ secrets.CORS_PROXY_URL }}
         run: node build.mjs
 
+      - name: Cache-bust dist/app.js and dist/styles.css in index.html
+        # dist/app.js and dist/styles.css have fixed filenames (no content
+        # hash), so a browser (or an intermediate cache) that already has
+        # them cached can keep serving the OLD bundle after a new deploy —
+        # every fix looks like it "didn't take" even though it shipped.
+        # Appending the commit SHA as a query string forces a fresh fetch
+        # on every deploy.
+        run: |
+          sed -i "s|dist/app.js|dist/app.js?v=${GITHUB_SHA::8}|g; s|dist/styles.css|dist/styles.css?v=${GITHUB_SHA::8}|g" index.html
+          grep -n "dist/app.js\|dist/styles.css" index.html
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
