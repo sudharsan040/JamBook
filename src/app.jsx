@@ -22,18 +22,23 @@ const ALL_SONGS_NAME = "All Songs";
 // it's always pinned to the top of that folder's song list.
 const CURRENTLY_VIBING_TITLE = "Currently Vibing";
 
-// A fresh, empty scratch song — seeded into every newly-created folder (see
-// db.createFolder) so the pinned slot is there from the start, no need to
-// hit 📝 once just to bring it into existence.
-function makeCurrentlyVibingSong() {
+// A fresh, empty scratch song for a folder's Currently Vibing slot.
+// Deliberately NEVER synced to Supabase (see the `vibeSongs` state in
+// App and LS_VIBE_KEY below) — it's a scratch pad that gets overwritten
+// constantly during a session, so it lives purely in this device's
+// localStorage, merged into the displayed song list at render time. The
+// id is deterministic (tied to the folder, not random) so it's stable
+// across reloads even before it's ever been explicitly saved once.
+function makeCurrentlyVibingSong(folderId) {
   return {
-    id: "cs_" + (window.crypto?.randomUUID?.() || (Date.now() + "-" + Math.random().toString(36).slice(2, 8))),
+    id: "cs_vibe_" + folderId,
     type: "custom",
     title: CURRENTLY_VIBING_TITLE,
     artist: "", album: "", language: "Tamil",
     customLyrics: "", customLyricsRoman: "",
   };
 }
+const LS_VIBE_KEY = "jb_vibe_songs"; // localStorage: { [folderId]: song }
 
 // ─── Supabase backend (cross-device sync) ─────────────────────────────
 // `process.env.SUPABASE_URL` / `SUPABASE_KEY` are LITERAL references that
@@ -2292,22 +2297,22 @@ const db = {
   },
 
   async createFolder(user, name) {
-    // Every folder gets the pinned "Currently Vibing" scratch slot from the
-    // moment it's created — except All Songs, which never carries it (see
-    // syncSongToAllSongs / saveLyricsEdit).
-    const seedSongs = name === ALL_SONGS_NAME ? [] : [makeCurrentlyVibingSong()];
+    // Currently Vibing is never stored here — it's merged into the
+    // displayed song list purely client-side from localStorage (see the
+    // `vibeSongs` state in App / makeCurrentlyVibingSong), so every folder
+    // starts with a genuinely empty `songs` array as before that feature.
     if (user?.isGuest) {
       // Guests get an in-memory folder; nothing persisted.
-      return { id: newFolderId(), name, songs: seedSongs, shareCode: null };
+      return { id: newFolderId(), name, songs: [], shareCode: null };
     }
     if (HAS_SUPABASE) {
       const { data, error } = await sb.from("folders")
-        .insert({ user_id: user.id, name, songs: seedSongs })
+        .insert({ user_id: user.id, name, songs: [] })
         .select().single();
       if (error) throw error;
       return { id: data.id, name: data.name, songs: data.songs, shareCode: null };
     }
-    const f = { id: newFolderId(), name, songs: seedSongs, shareCode: null };
+    const f = { id: newFolderId(), name, songs: [], shareCode: null };
     const all = getUserFolders(user.id);
     saveUserFolders(user.id, [...all, f]);
     return f;
@@ -4394,7 +4399,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
                 <button onClick={()=>onEditSong(song)} title="Edit lyrics"
                   className="text-gray-600 hover:text-amber-400 text-sm px-1.5 transition-all">✎</button>
               )}
-              {!audienceLocked && (
+              {!audienceLocked && song.title !== CURRENTLY_VIBING_TITLE && (
                 <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
                   className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
               )}
@@ -5380,6 +5385,10 @@ function App() {
   const [queueCollapsed,setQueueCollapsed] = React.useState(false);
   const [lyricsScale,setLyricsScale]       = React.useState(1);
   const [folders,setFolders]               = React.useState([]);
+  // Currently Vibing songs, one per folder — device-local only, never sent
+  // to Supabase (see makeCurrentlyVibingSong / LS_VIBE_KEY). Merged into
+  // `folderSongs` below at render time, not part of `folders` itself.
+  const [vibeSongs,setVibeSongs]           = React.useState(() => LS.get(LS_VIBE_KEY, {}));
   const [shareTarget,setShareTarget]       = React.useState(null);
   const [showImport,setShowImport]         = React.useState(false);
   const [showSettings,setShowSettings]     = React.useState(false);
@@ -5443,6 +5452,31 @@ function App() {
         }
       }
       setFolders(fs || []);
+      // One-time migration: an earlier version stored "Currently Vibing"
+      // directly in the synced folder — it's device-local only now (see
+      // vibeSongs/LS_VIBE_KEY). Pull any leftover one out into local
+      // storage (so its content isn't lost) and strip it from what's
+      // synced going forward, matching "don't want it in the database".
+      for (const f of (fs || [])) {
+        const vibeRow = (f.songs || []).find(s => s.title === CURRENTLY_VIBING_TITLE);
+        if (!vibeRow) continue;
+        setVibeSongs(prev => {
+          if (prev[f.id]) return prev; // already have a local one — don't clobber it with a stale DB copy
+          const next = {
+            ...prev,
+            [f.id]: {
+              id: vibeRow.id, type: "custom", title: CURRENTLY_VIBING_TITLE,
+              artist: "", album: "", language: vibeRow.language || "Tamil",
+              customLyrics: vibeRow.customLyrics || "", customLyricsRoman: vibeRow.customLyricsRoman || "",
+            },
+          };
+          LS.set(LS_VIBE_KEY, next);
+          return next;
+        });
+        db.mutateFolderSongs(user, f, songs => songs.filter(s => s.title !== CURRENTLY_VIBING_TITLE))
+          .then(cleaned => setFolders(fs2 => fs2.map(x => x.id === f.id ? cleaned : x)))
+          .catch(() => {});
+      }
       // Backfill the archive from any songs that already carry custom
       // lyrics — cheap (a write, no read back) and keeps shared-folder
       // imports well-stocked. Deliberately NOT calling preFetchFolderSongs
@@ -5866,22 +5900,14 @@ function App() {
     setEditorState({ mode: "new", folderId });
   };
   // 📝 quick-add in the queue panel — the Currently Vibing scratch slot.
-  // Reuses the folder's existing one if there is a one (a single reusable
-  // slot, not a fresh entry every time — see CURRENTLY_VIBING_TITLE); only
-  // the id/type carry over (not its lyrics text), so the modal still opens
-  // with a blank textarea ready to paste into, but saving updates that same
-  // song instead of adding another. Simplified Title+Lyrics-only form.
-  const openQuickVibe = async (folderId) => {
-    // Read fresh from the DB rather than trusting this device's local
-    // `folders` state — if that's ever stale (e.g. right after some other
-    // write), the reuse-lookup below can miss the real existing slot and
-    // create a genuine duplicate instead of updating it in place.
-    const folder = folderId ? folders.find(f => f.id === folderId) : null;
-    const freshSongs = folder ? await db.getFolderSongs(user, folderId) : null;
-    const songs = freshSongs || folder?.songs || [];
-    const existing = songs.find(s => s.title === CURRENTLY_VIBING_TITLE);
-    const song = existing ? { id: existing.id, type: existing.type, title: existing.title } : null;
-    setEditorState({ mode: "vibe", folderId, song });
+  // Purely local (see vibeSongs/LS_VIBE_KEY), so there's always exactly one
+  // per folder with a stable, deterministic id — no lookup/race to get
+  // wrong. Only the id/type/title carry over here (not its lyrics text),
+  // so the modal still opens with a blank textarea ready to paste into,
+  // but saving updates this same song instead of adding another.
+  const openQuickVibe = (folderId) => {
+    const existing = vibeSongs[folderId] || makeCurrentlyVibingSong(folderId);
+    setEditorState({ mode: "vibe", folderId, song: { id: existing.id, type: existing.type, title: existing.title } });
   };
   // Edit handler — prefills BOTH the native and roman textareas so the user
   // doesn't have to start from scratch in either script.
@@ -5910,6 +5936,40 @@ function App() {
     const { mode, song } = editorState;
     // Resolve folder: explicit prop, or fall back to picker selection from modal
     const folderId = editorState.folderId || data.folderId;
+
+    if (mode === "vibe" || song?.title === CURRENTLY_VIBING_TITLE) {
+      // Currently Vibing is device-local only (see vibeSongs/LS_VIBE_KEY) —
+      // never touches Supabase, so this is instant and can't silently fail
+      // the way a real synced save can (that's the persistFailed check
+      // below, for the "new"/"edit" path only).
+      const vibeSong = {
+        id: song?.id || makeCurrentlyVibingSong(folderId).id,
+        type: "custom",
+        title: CURRENTLY_VIBING_TITLE,
+        artist: "", album: "", language: "Tamil",
+        customLyrics: data.customLyrics,
+        customLyricsRoman: data.customLyricsRoman,
+      };
+      setVibeSongs(prev => {
+        const next = { ...prev, [folderId]: vibeSong };
+        LS.set(LS_VIBE_KEY, next);
+        return next;
+      });
+      if (activeSong && activeSong.id === vibeSong.id) setActiveSong(vibeSong);
+      // If I'm broadcasting and this is the song currently live, push the
+      // edit to followers the same way a real song's edit would.
+      if (isBroadcasting && broadcastChannelRef.current && activeFolderId === folderId && activeSong?.id === vibeSong.id) {
+        broadcastChannelRef.current.send({
+          type: "broadcast",
+          event: "lyrics_update",
+          payload: { songId: vibeSong.id, patch: { customLyrics: vibeSong.customLyrics, customLyricsRoman: vibeSong.customLyricsRoman } },
+        });
+      }
+      showToast("Lyrics saved");
+      setEditorState(null);
+      return;
+    }
+
     const folder = folders.find(f => f.id === folderId);
     if (!folder) { setEditorState(null); return; }
 
@@ -6065,7 +6125,19 @@ function App() {
   };
 
   const activeFolder = folders.find(f => f.id === activeFolderId);
-  const folderSongs  = activeFolder ? activeFolder.songs : [];
+  // Currently Vibing is merged in here, client-side only — never part of
+  // activeFolder.songs itself (see the `vibeSongs` state above). Pinned
+  // first, matching where the sort in FolderView/FolderQueuePanel expects
+  // it. All Songs never carries one, same as before — and neither does a
+  // folder I don't own (audience/guests viewing a shared folder shouldn't
+  // see a host-only scratch slot appear on their own screen).
+  const isMyOwnFolder = !!activeFolder && (!activeFolder.originalOwnerId || activeFolder.originalOwnerId === user?.id);
+  const vibeSong = (activeFolder && activeFolder.name !== ALL_SONGS_NAME && isMyOwnFolder)
+    ? (vibeSongs[activeFolder.id] || makeCurrentlyVibingSong(activeFolder.id))
+    : null;
+  const folderSongs = activeFolder
+    ? (vibeSong ? [vibeSong, ...activeFolder.songs] : activeFolder.songs)
+    : [];
 
   // ─── Broadcast helpers ────────────────────────────────────────────
   // Am I allowed to broadcast on this folder? Only the original owner can.
