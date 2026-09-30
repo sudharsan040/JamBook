@@ -3073,15 +3073,13 @@ function FontSizeControl({ scale, onChange }) {
 // ─── Queue Panel ──────────────────────────────────────────────────────
 // Split a folder's songs into {pending, completed}, keeping each song's
 // ORIGINAL position (i) so the number badge stays stable across both groups.
-// The "Currently Vibing" scratch song is always pinned first within
-// whichever group it lands in — display order only, `i` (and so its number
-// badge) still reflects its real position in the folder.
+// `songs` here is always the real synced list — Currently Vibing is never
+// part of it (rendered as its own separate row wherever this is used).
 function partitionCompleted(songs) {
   const indexed = songs.map((song, i) => ({ song, i }));
-  const pinFirst = (a, b) => (b.song.title === CURRENTLY_VIBING_TITLE) - (a.song.title === CURRENTLY_VIBING_TITLE);
   return {
-    pending:   indexed.filter(x => !x.song.completed).sort(pinFirst),
-    completed: indexed.filter(x =>  x.song.completed).sort(pinFirst),
+    pending:   indexed.filter(x => !x.song.completed),
+    completed: indexed.filter(x =>  x.song.completed),
   };
 }
 
@@ -3095,14 +3093,13 @@ function matchesQueueSearch(query, song, num) {
 }
 
 function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folderId, canManage = true }) {
-  const isVibeSlot = song.title === CURRENTLY_VIBING_TITLE;
   return (
     <div onClick={() => onOpenSong(song)}
       className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${isActive ? "queue-song-active" : "border-[#1e1e2e] hover:bg-[#1a1a2e]"} ${song.completed ? "opacity-50" : ""}`}>
       {isActive && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full"/>}
       <div className="flex items-start justify-between gap-2 pl-1">
         <div className="flex items-start gap-2 min-w-0">
-          <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive ? "text-amber-400" : "text-gray-700"}`}>{isVibeSlot ? "📌" : i + 1}</span>
+          <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${isActive ? "text-amber-400" : "text-gray-700"}`}>{i + 1}</span>
           <div className="min-w-0">
             <div className={`text-xs font-semibold leading-tight truncate ${song.completed ? "line-through" : ""} ${isActive ? "text-amber-200" : "text-gray-300"}`}>{song.title}</div>
             {(song.artist || song.singer) && (
@@ -3125,7 +3122,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
             )}
           </div>
         </div>
-        {onToggleCompleted && !isVibeSlot && canManage && (
+        {onToggleCompleted && canManage && (
           <button
             onClick={(e) => { e.stopPropagation(); onToggleCompleted(folderId, song.id); }}
             title={song.completed ? "Mark as not completed" : "Mark as completed"}
@@ -3138,7 +3135,7 @@ function QueueSongRow({ song, i, isActive, onOpenSong, onToggleCompleted, folder
   );
 }
 
-function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCompleted,
+function FolderQueuePanel({folder,folderSongs,vibeSong,activeSongId,onOpenSong,onToggleCompleted,
   canBroadcast,isBroadcasting,onStartBroadcast,onStopBroadcast,viewerCount,
   broadcastModerator,liveBroadcastSong,collapsed,onToggleCollapse,onShuffleQueue,onRefreshQueue,onSortQueue,onThankYou,onAddCustom}) {
   const { pending, completed } = partitionCompleted(folderSongs);
@@ -3275,6 +3272,18 @@ function FolderQueuePanel({folder,folderSongs,activeSongId,onOpenSong,onToggleCo
           className="w-full text-xs bg-[#1a1a2e] border border-[#2e2e44] rounded-lg px-3 py-2 text-gray-200 placeholder-gray-600 focus:border-amber-500 focus:outline-none"/>
       </div>
       <div className="flex-1 overflow-y-auto py-3 px-2 space-y-1.5">
+        {/* Currently Vibing — its own fixed row, never part of the numbered
+            queue below (so song 1 really is the first real song added). */}
+        {vibeSong && (
+          <div onClick={()=>onOpenSong(vibeSong)}
+            className={`queue-song relative cursor-pointer rounded-lg border border-amber-500/40 px-3 py-2.5 transition-all ${vibeSong.id===activeSongId ? "queue-song-active" : "hover:bg-[#1a1a2e]"}`}>
+            {vibeSong.id===activeSongId && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full"/>}
+            <div className="flex items-center gap-2 pl-1">
+              <span className="text-xs flex-shrink-0">📌</span>
+              <span className={`text-xs font-semibold truncate ${vibeSong.id===activeSongId ? "text-amber-200" : "text-gray-300"}`}>{vibeSong.title}</span>
+            </div>
+          </div>
+        )}
         {visiblePending.map(({song,i})=>(
           <QueueSongRow key={song.id} song={song} i={i} isActive={song.id===activeSongId}
             onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted} folderId={folder.id} canManage={!audienceLocked}/>
@@ -3383,7 +3392,7 @@ function CuratedSongView({song,onBack,onAddToFolder,folders,activeFolder,folderS
 }
 
 // ─── Live Song View (iTunes) ──────────────────────────────────────────
-function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,onOpenSong,onEditSong,onShareFolder,onToggleCompleted,
+function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSongs,vibeSong,onOpenSong,onEditSong,onShareFolder,onToggleCompleted,
   isBroadcasting, broadcastModerator, liveBroadcastSong, followingBroadcast, onLeaveBroadcast,
   canBroadcast, onStartBroadcast, onStopBroadcast, viewerCount,
   onBroadcastSourceChange, lyricsRefreshTick, lyricsScale, onLyricsScaleChange,
@@ -3504,7 +3513,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
   const [showSpin, setShowSpin] = React.useState(false);
   const [queueSearch, setQueueSearch] = React.useState("");
   const [showSourceMenu, setShowSourceMenu] = React.useState(false);
-  const hasQueue = activeFolder && folderSongs && folderSongs.length > 0;
+  const hasQueue = activeFolder && ((folderSongs && folderSongs.length > 0) || vibeSong);
   const pendingQueueSongs = hasQueue ? partitionCompleted(folderSongs).pending : [];
   // Queue number of whatever the MODERATOR currently has live, for the
   // "X is live" indicator — not necessarily the song I'm looking at (I may
@@ -3712,7 +3721,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
 
       {/* Desktop inline queue panel */}
       {hasQueue && !isMobile && (
-        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted}
+        <FolderQueuePanel folder={activeFolder} folderSongs={folderSongs} vibeSong={vibeSong} activeSongId={song.id} onOpenSong={onOpenSong} onToggleCompleted={onToggleCompleted}
           canBroadcast={canBroadcast}
           isBroadcasting={isBroadcasting}
           onStartBroadcast={onStartBroadcast}
@@ -3829,14 +3838,12 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                 const { pending: allPending, completed: allCompleted } = partitionCompleted(folderSongs);
                 const pending   = allPending.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
                 const completed = allCompleted.filter(x => matchesQueueSearch(queueSearch, x.song, x.i + 1));
-                const row = ({song: s, i}) => {
-                  const isVibeSlot = s.title === CURRENTLY_VIBING_TITLE;
-                  return (
+                const row = ({song: s, i}) => (
                   <div key={s.id} onClick={()=>{onOpenSong(s); setShowQueue(false);}}
                     className={`queue-song relative cursor-pointer rounded-lg border px-3 py-2.5 transition-all ${s.id===song.id?"queue-song-active":"border-[#1e1e2e]"} ${s.completed?"opacity-50":""}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2 min-w-0">
-                        <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${s.id===song.id?"text-amber-400":"text-gray-700"}`}>{isVibeSlot ? "📌" : i+1}</span>
+                        <span className={`text-xs font-bold mt-0.5 w-4 flex-shrink-0 ${s.id===song.id?"text-amber-400":"text-gray-700"}`}>{i+1}</span>
                         <div className="min-w-0 flex-1">
                           <div className={`text-sm font-semibold leading-tight truncate ${s.completed?"line-through":""} ${s.id===song.id?"text-amber-200":"text-gray-300"}`}>{s.title}</div>
                           <div className="text-xs text-gray-600 truncate mt-0.5">
@@ -3846,7 +3853,7 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                           </div>
                         </div>
                       </div>
-                      {onToggleCompleted && !isVibeSlot && !(broadcastModerator && !isBroadcasting) && (
+                      {onToggleCompleted && !(broadcastModerator && !isBroadcasting) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onToggleCompleted(activeFolder.id, s.id); }}
                           title={s.completed ? "Mark as not completed" : "Mark as completed"}
@@ -3856,10 +3863,18 @@ function LiveSongView({song,onBack,onAddToFolder,folders,activeFolder,folderSong
                       )}
                     </div>
                   </div>
-                  );
-                };
+                );
                 return (
                   <>
+                    {vibeSong && (
+                      <div onClick={()=>{onOpenSong(vibeSong); setShowQueue(false);}}
+                        className={`queue-song relative cursor-pointer rounded-lg border border-amber-500/40 px-3 py-2.5 transition-all ${vibeSong.id===song.id?"queue-song-active":""}`}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs flex-shrink-0">📌</span>
+                          <span className={`text-sm font-semibold truncate ${vibeSong.id===song.id?"text-amber-200":"text-gray-300"}`}>{vibeSong.title}</span>
+                        </div>
+                      </div>
+                    )}
                     {pending.map(row)}
                     {completed.length > 0 && (
                       <>
@@ -4271,7 +4286,7 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
   );
 }
 
-function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
+function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
   broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount,
   showToast, onPersistRequestToken, onPersistRequestCaps, onRefresh}) {
@@ -4285,13 +4300,6 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
   // session-management controls (same condition used to lock editing
   // elsewhere in LiveSongView/FolderQueuePanel).
   const audienceLocked = !!broadcastModerator && !isBroadcasting;
-  // "Currently Vibing" pinned first — display order only, each song keeps
-  // its real position number (i) from the underlying array.
-  const orderedSongs = React.useMemo(() => {
-    const indexed = songs.map((song, i) => ({ song, i }));
-    indexed.sort((a, b) => (b.song.title === CURRENTLY_VIBING_TITLE) - (a.song.title === CURRENTLY_VIBING_TITLE));
-    return indexed;
-  }, [songs]);
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 border-b border-[#1e1e2e]">
@@ -4365,16 +4373,32 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-5 space-y-2 sm:space-y-3">
-        {songs.length===0&&(
+        {songs.length===0 && !vibeSong && (
           <div className="text-center py-16 text-gray-500">
             <div className="text-4xl mb-3">🎵</div>
             <p>No songs yet. Search & add, or tap <span className="text-amber-400 font-semibold">+ Add Lyrics</span> to add your own.</p>
           </div>
         )}
-        {orderedSongs.map(({song,i})=>(
-          <div key={song.id} className={`flex items-center justify-between gap-2 bg-[#1a1a2e] border rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0 ${song.title === CURRENTLY_VIBING_TITLE ? "border-amber-500/50" : "border-[#2e2e44]"}`}>
+        {/* Currently Vibing — its own fixed row, never part of the numbered
+            list below (so song 1 really is the first real song added). */}
+        {vibeSong && (
+          <div key={vibeSong.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-amber-500/50 rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/70 transition-all min-w-0">
+            <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(vibeSong)}>
+              <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">📌</span>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-white truncate text-sm sm:text-base">{vibeSong.title}</div>
+              </div>
+            </div>
+            {!(broadcastModerator && !isBroadcasting) && (
+              <button onClick={()=>onEditSong(vibeSong)} title="Edit lyrics"
+                className="text-gray-600 hover:text-amber-400 text-sm px-1.5 transition-all flex-shrink-0">✎</button>
+            )}
+          </div>
+        )}
+        {songs.map((song,i)=>(
+          <div key={song.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0">
             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
-              <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{song.title === CURRENTLY_VIBING_TITLE ? "📌" : i+1}</span>
+              <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
               <div className="min-w-0 flex-1">
                 <div className="font-semibold text-white truncate text-sm sm:text-base">
                   {song.title}
@@ -4399,7 +4423,7 @@ function FolderView({folder,songs,onOpenSong,onRemove,onBack,onAddCustom,onEditS
                 <button onClick={()=>onEditSong(song)} title="Edit lyrics"
                   className="text-gray-600 hover:text-amber-400 text-sm px-1.5 transition-all">✎</button>
               )}
-              {!audienceLocked && song.title !== CURRENTLY_VIBING_TITLE && (
+              {!audienceLocked && (
                 <button onClick={()=>onRemove(folder.id,song.id)} title="Remove"
                   className="text-gray-600 hover:text-red-400 text-sm px-1.5 transition-all">✕</button>
               )}
@@ -6144,19 +6168,20 @@ function App() {
   };
 
   const activeFolder = folders.find(f => f.id === activeFolderId);
-  // Currently Vibing is merged in here, client-side only — never part of
-  // activeFolder.songs itself (see the `vibeSongs` state above). Pinned
-  // first, matching where the sort in FolderView/FolderQueuePanel expects
-  // it. All Songs never carries one, same as before — and neither does a
-  // folder I don't own (audience/guests viewing a shared folder shouldn't
-  // see a host-only scratch slot appear on their own screen).
+  // folderSongs stays the REAL synced list only — Currently Vibing is never
+  // merged into it, so queue numbers always start at 1 for the first real
+  // song (it also never reaches Supabase, so it was already invisible on
+  // the Request Songs page — that page reads straight from the DB). It's
+  // rendered as its own separate row wherever the queue/song list appears
+  // (see the `vibeSong` prop threaded into FolderView/FolderQueuePanel),
+  // never part of the numbered array. All Songs never gets one, and
+  // neither does a folder I don't own (audience/guests viewing a shared
+  // folder shouldn't see a host-only scratch slot appear on their screen).
   const isMyOwnFolder = !!activeFolder && (!activeFolder.originalOwnerId || activeFolder.originalOwnerId === user?.id);
   const vibeSong = (activeFolder && activeFolder.name !== ALL_SONGS_NAME && isMyOwnFolder)
     ? (vibeSongs[activeFolder.id] || makeCurrentlyVibingSong(activeFolder.id))
     : null;
-  const folderSongs = activeFolder
-    ? (vibeSong ? [vibeSong, ...activeFolder.songs] : activeFolder.songs)
-    : [];
+  const folderSongs = activeFolder ? activeFolder.songs : [];
 
   // ─── Broadcast helpers ────────────────────────────────────────────
   // Am I allowed to broadcast on this folder? Only the original owner can.
@@ -6433,7 +6458,7 @@ function App() {
         {view==="song"&&activeSong&&activeSong.type!=="curated"&&(
           <LiveSongView
             song={activeSong} onBack={()=>{ user?.isGuest&&activeFolderId ? setView("folder") : setView("search"); }} folders={folders} onAddToFolder={addToFolder}
-            activeFolder={activeFolder} folderSongs={folderSongs}
+            activeFolder={activeFolder} folderSongs={folderSongs} vibeSong={vibeSong}
             onOpenSong={s=>openSong(s,activeFolderId)}
             onEditSong={(s, currentLyrics)=>openEditSong(activeFolderId, s, currentLyrics)}
             onShareFolder={setShareTarget}
@@ -6460,7 +6485,7 @@ function App() {
         )}
         {view==="folder"&&activeFolder&&(
           <FolderView
-            folder={activeFolder} songs={folderSongs}
+            folder={activeFolder} songs={folderSongs} vibeSong={vibeSong}
             onOpenSong={s=>openSong(s,activeFolder.id)}
             onRemove={removeFromFolder}
             onRefresh={()=>refreshFolder(activeFolder.id)}
