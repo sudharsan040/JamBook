@@ -5942,13 +5942,26 @@ function App() {
       // never touches Supabase, so this is instant and can't silently fail
       // the way a real synced save can (that's the persistFailed check
       // below, for the "new"/"edit" path only).
+      // customLyricsRoman is deliberately ALWAYS cleared here, ignoring
+      // whatever the modal sent — the vibe form has no UI to edit or see
+      // that field, but openEditSong (✎ Edit Lyrics) auto-prefills it from
+      // a one-off transliteration snapshot of whatever was on screen when
+      // the editor opened. Once set, that snapshot would sit there
+      // untouched across every future vibe save (nothing in this UI can
+      // ever change it) — and LiveSongView's Roman-script view (the
+      // default) prefers `customLyricsRoman` over live-transliterating the
+      // current native lyrics, so it would keep showing that frozen
+      // snapshot forever: every NEW edit looked like it silently reverted
+      // to old content, even though `customLyrics` itself was updating
+      // correctly the whole time. Leaving it empty makes the Roman view
+      // always transliterate whatever's actually current.
       const vibeSong = {
         id: song?.id || makeCurrentlyVibingSong(folderId).id,
         type: "custom",
         title: CURRENTLY_VIBING_TITLE,
         artist: "", album: "", language: "Tamil",
         customLyrics: data.customLyrics,
-        customLyricsRoman: data.customLyricsRoman,
+        customLyricsRoman: "",
       };
       setVibeSongs(prev => {
         const next = { ...prev, [folderId]: vibeSong };
