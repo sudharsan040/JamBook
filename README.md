@@ -277,7 +277,7 @@ returns table (
   id text, name text, songs jsonb,
   request_cap int, request_cap_per_user int, spotify_playlist_url text
 )
-language sql stable security invoker as $
+language sql stable security invoker as $$
   select f.id::text, f.name,
     coalesce((
       select jsonb_agg(jsonb_build_object(
@@ -291,7 +291,7 @@ language sql stable security invoker as $
   from public.folders f
   where f.request_token = p_token
   limit 1;
-$;
+$$;
 grant execute on function public.folder_songs_slim(text) to anon, authenticated;
 ```
 
