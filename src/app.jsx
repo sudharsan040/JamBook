@@ -4535,6 +4535,13 @@ function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCusto
   showToast, onPersistRequestToken, onPersistRequestCaps, onRefresh}) {
   const [showRequestLink, setShowRequestLink] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
+  // View-only sort — never changes the stored order of the folder.
+  const [sortBy, setSortBy] = React.useState("added");
+  const shownSongs = React.useMemo(() => {
+    if (sortBy === "az") return [...songs].sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base", numeric: true }));
+    if (sortBy === "likes") return [...songs].sort((a, b) => (b.votes || 0) - (a.votes || 0));
+    return songs;
+  }, [songs, sortBy]);
   const doRefresh = async () => {
     setRefreshing(true);
     try { await onRefresh(); } finally { setRefreshing(false); }
@@ -4667,7 +4674,18 @@ function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCusto
             )}
           </div>
         )}
-        {songs.map((song,i)=>(
+        {songs.length > 1 && (
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-gray-500 mr-0.5">Sort</span>
+            {[["added","Added"],["az","A → Z"],["likes","❤️ Most liked"]].map(([k, label]) => (
+              <button key={k} onClick={()=>setSortBy(k)}
+                className={`px-2.5 py-1 rounded-lg border transition-all ${sortBy===k ? "border-amber-500/60 bg-amber-500/10 text-amber-300" : "border-[#2e2e44] text-gray-500 hover:text-gray-300"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {shownSongs.map((song,i)=>(
           <div key={song.id} className="flex items-center justify-between gap-2 bg-[#1a1a2e] border border-[#2e2e44] rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 hover:border-amber-500/40 transition-all min-w-0">
             <div className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onClick={()=>onOpenSong(song)}>
               <span className="text-lg sm:text-xl font-bold text-amber-800 w-5 sm:w-6 flex-shrink-0">{i+1}</span>
