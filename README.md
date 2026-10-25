@@ -284,7 +284,7 @@ language sql stable security invoker as $$
       select jsonb_agg(jsonb_build_object(
         'id', s->'id', 'title', s->'title', 'artist', s->'artist', 'singer', s->'singer',
         'album', s->'album', 'movie', s->'movie', 'completed', s->'completed',
-        'votes', s->'votes', 'requestedBy', s->'requestedBy'
+        'votes', s->'votes', 'requestedBy', s->'requestedBy', 'spotifyId', s->'spotifyId'
       ) order by ord)
       from jsonb_array_elements(f.songs) with ordinality as t(s, ord)
     ), '[]'::jsonb) as songs,
@@ -301,6 +301,10 @@ adds each new request to the playlist within a few seconds (the request page sen
 tiny "song added" nudge; your app re-reads the folder and adds what's new). It runs only
 while JamBook is open on your device, catches up when you reopen it, and pauses when you
 toggle it off. It's remembered per folder on that device.
+
+When a song is matched on Spotify, the match is saved on the song (`spotifyId`), so the
+🎧 button on the request page opens that exact track. (If you ran an older version of
+the SQL above, run the block again — it's the same, plus that one field in the list.)
 
 Notes: songs are matched on Spotify by title + artist (exact for songs added from
 Spotify), so a few — especially regional ones — may be skipped; the toast says how many

@@ -2377,7 +2377,9 @@ async function syncFolderToSpotify({ token, folderId, folderName, songs, existin
     const a = await spotifyApi(token, "POST", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: toAdd.slice(i, i + 100) });
     if (!a.ok) fail(a);
   }
-  return { url: `https://open.spotify.com/playlist/${playlistId}`, added: toAdd.length, matched: wanted.length, total: songs.length };
+  const matches = {}; // songId -> track uri, for every song that has a Spotify match
+  songs.forEach((s, i) => { if (found[i]) matches[String(s.id)] = found[i]; });
+  return { url: `https://open.spotify.com/playlist/${playlistId}`, added: toAdd.length, matched: wanted.length, total: songs.length, matches };
 }
 
 // Tiny "a song was added" nudge on the request link's live channel, sent by
@@ -2399,13 +2401,15 @@ function pingRequestChannel(token) {
   } catch {}
 }
 
-// Link that opens a song in Spotify — no login or API call. Songs that came
-// from Spotify carry its track id in ours (sp_<id>), so those open the exact
-// track; anything else opens a Spotify search for "title artist" (title
-// cleaned of "(From ...)" style suffixes, first artist only), which lands on
-// the right song almost every time.
+// Link that opens a song in Spotify — no login or API call. Exact track when
+// we know it: songs that came from Spotify carry its id (sp_<id>), and the
+// host's sync saves the matched track id on every other song (spotifyId).
+// Otherwise a Spotify search for "title artist" (title cleaned of "(From ...)"
+// style suffixes, first artist only), which lands on the right song almost
+// every time.
 function spotifyUrl(song) {
   const id = String(song?.id || "");
+  if (song?.spotifyId) return `https://open.spotify.com/track/${song.spotifyId}`; // saved by the host's sync
   if (id.startsWith("sp_")) return `https://open.spotify.com/track/${id.slice(3)}`;
   const artist = (song?.artist || song?.singer || "").split(",")[0].trim();
   const q = [normalizeTitle(song?.title || ""), artist && artist !== "Unknown" ? artist : ""].filter(Boolean).join(" ");
@@ -6232,6 +6236,34 @@ function App() {
       if (saved) setFolders(fs => fs.map(x => x.id === folder.id ? { ...x, spotifyPlaylistUrl: res.url } : x));
     }
     LS.set("jb_sp_synced_" + folder.id, all.map(x => x.id).join(","));
+
+    // Remember each matched track on its song, so the audience's request page
+    // can link straight to the exact track instead of a search. Best effort,
+    // and only for songs not already stored: this device keeps its own list of
+    // what it has stored, because the request page's slim data call doesn't
+    // show the field until the README's SQL step has been run.
+    try {
+      const storedKey = "jb_sp_stored_" + folder.id;
+      const stored = new Set(LS.get(storedKey, []));
+      songs.forEach(s => { if (s.spotifyId) stored.add(s.id); }); // already saved in the DB — remember that too
+      const map = {};
+      songs.forEach(s => {
+        const uri = res.matches?.[String(s.id)];
+        if (uri && !String(s.id).startsWith("sp_") && !s.spotifyId && !stored.has(s.id)) {
+          map[s.id] = uri.replace("spotify:track:", "");
+        }
+      });
+      const ids = Object.keys(map);
+      if (ids.length) {
+        const updated = await db.mutateFolderSongs(user, folder,
+          cur => cur.map(s => (map[s.id] && !s.spotifyId) ? { ...s, spotifyId: map[s.id] } : s));
+        if (!updated._persistFailed) {
+          LS.set(storedKey, [...stored, ...ids]);
+          setFolders(fs => fs.map(x => x.id === folder.id ? { ...x, songs: updated.songs } : x));
+        }
+      }
+    } catch (e) { console.warn("[spotify] couldn't store matches", e); }
+
     return { ...res, saved };
   };
 
