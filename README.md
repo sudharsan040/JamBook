@@ -251,6 +251,54 @@ warnings) and exposed the Sheet ID in the app. A service account is a robot
 identity your Worker authenticates as directly — no human interaction, no
 popup, and both the Sheet ID and credentials stay server-side.
 
+### Optional: Spotify playlist for the request page
+
+A folder owner can press **🎧 Spotify playlist** in a folder to create one public
+playlist from its songs; audience members then get a **Listen on Spotify** button
+on the request page that opens it (no login for them). Pressing **Sync Spotify**
+later replaces the playlist's contents with the folder's current songs.
+
+1. **Create a Spotify app** at <https://developer.spotify.com/dashboard> → *Create app*.
+   - Redirect URI: `https://sudharsan040.github.io/JamBook/` (exactly, with the trailing slash)
+   - APIs used: *Web API*
+   - After creating it: *Settings → User Management* → add your own Spotify account's email.
+     (Apps start in development mode, where only accounts listed there can log in.)
+2. Copy the app's **Client ID** into `SPOTIFY_USER_CLIENT_ID` near the top of the
+   "Spotify playlist sync" block in `src/app.jsx` (it's public — safe to commit).
+   While it's empty the button stays hidden.
+3. **Run this SQL once** in Supabase → SQL editor:
+
+```sql
+alter table public.folders add column if not exists spotify_playlist_url text;
+
+drop function if exists public.folder_songs_slim(text);
+create function public.folder_songs_slim(p_token text)
+returns table (
+  id text, name text, songs jsonb,
+  request_cap int, request_cap_per_user int, spotify_playlist_url text
+)
+language sql stable security invoker as $
+  select f.id::text, f.name,
+    coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', s->'id', 'title', s->'title', 'artist', s->'artist', 'singer', s->'singer',
+        'album', s->'album', 'movie', s->'movie', 'completed', s->'completed',
+        'votes', s->'votes', 'requestedBy', s->'requestedBy'
+      ) order by ord)
+      from jsonb_array_elements(f.songs) with ordinality as t(s, ord)
+    ), '[]'::jsonb) as songs,
+    f.request_cap::int, f.request_cap_per_user::int, f.spotify_playlist_url
+  from public.folders f
+  where f.request_token = p_token
+  limit 1;
+$;
+grant execute on function public.folder_songs_slim(text) to anon, authenticated;
+```
+
+Notes: songs are matched on Spotify by title + artist (exact for songs added from
+Spotify), so a few — especially regional ones — may be skipped; the toast says
+"Synced X of Y". The Spotify login lasts about an hour per browser tab.
+
 ### Making changes
 Edit `src/app.jsx` and commit. The GitHub Action automatically:
 1. Installs esbuild + react + react-dom

@@ -1778,6 +1778,7 @@ async function fetchFolderByRequestToken(token) {
     id: row.id, name: row.name, songs: row.songs || [],
     requestCap: row.request_cap ?? null,
     requestCapPerUser: row.request_cap_per_user ?? null,
+    spotifyPlaylistUrl: row.spotify_playlist_url || null,
   };
 }
 
@@ -2184,6 +2185,164 @@ async function preFetchFolderSongs(songs, concurrency = 5) {
   await Promise.all(workers);
 }
 
+// ─── Spotify playlist sync (host only) ────────────────────────────────
+// The host logs in to Spotify once (PKCE flow — only the public Client ID is
+// needed, no secret anywhere in the page), then this creates/updates ONE
+// public playlist from the folder's songs. Its link is saved on the folder
+// (spotify_playlist_url) and shown to audience members on the request page
+// as a plain "Listen on Spotify" link — they never log in to anything.
+//
+// Paste your Spotify app's Client ID here (see README → Spotify playlist).
+// Empty = the feature stays hidden.
+const SPOTIFY_USER_CLIENT_ID = "";
+const SP_SCOPES = "playlist-modify-public playlist-modify-private";
+const spRedirectUri = () => window.location.origin + window.location.pathname;
+const spRandom = (n) => {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const bytes = crypto.getRandomValues(new Uint8Array(n));
+  return Array.from(bytes, b => chars[b % chars.length]).join("");
+};
+const spB64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
+  .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const spSleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function getSpotifyToken() {
+  try {
+    const t = JSON.parse(sessionStorage.getItem("jb_sp_token") || "null");
+    return t && t.exp > Date.now() + 60000 ? t.token : null;
+  } catch { return null; }
+}
+
+// Sends the host to Spotify to log in; remembers which folder to sync once
+// they're back (the page fully reloads on return).
+async function spotifyLoginRedirect(folderId) {
+  const verifier  = spRandom(64);
+  const challenge = spB64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+  const state     = spRandom(16);
+  sessionStorage.setItem("jb_sp_verifier", verifier);
+  sessionStorage.setItem("jb_sp_state", state);
+  sessionStorage.setItem("jb_sp_folder", folderId);
+  window.location.href = "https://accounts.spotify.com/authorize?" + new URLSearchParams({
+    client_id: SPOTIFY_USER_CLIENT_ID, response_type: "code", redirect_uri: spRedirectUri(),
+    scope: SP_SCOPES, code_challenge_method: "S256", code_challenge: challenge, state,
+  });
+}
+
+// Called once on app load. If the URL is Spotify sending the host back,
+// swaps the code for a token (stored for this tab only) and returns
+// { folderId } / { error } / { failed }; returns null for any other load.
+async function spotifyHandleRedirect() {
+  const p = new URLSearchParams(window.location.search);
+  const code = p.get("code"), state = p.get("state"), err = p.get("error");
+  if (!code && !err) return null;
+  const expected = sessionStorage.getItem("jb_sp_state");
+  if (!expected || state !== expected) return null; // not ours
+  const verifier = sessionStorage.getItem("jb_sp_verifier");
+  const folderId = sessionStorage.getItem("jb_sp_folder");
+  ["jb_sp_state", "jb_sp_verifier", "jb_sp_folder"].forEach(k => sessionStorage.removeItem(k));
+  const url = new URL(window.location.href);
+  ["code", "state", "error"].forEach(k => url.searchParams.delete(k));
+  window.history.replaceState({}, "", url.toString());
+  if (err) return { error: err };
+  try {
+    const r = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code", code, redirect_uri: spRedirectUri(),
+        client_id: SPOTIFY_USER_CLIENT_ID, code_verifier: verifier || "",
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.access_token) return { failed: true };
+    sessionStorage.setItem("jb_sp_token", JSON.stringify({ token: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000 }));
+    return { folderId };
+  } catch { return { failed: true }; }
+}
+
+// One Spotify Web API call, trying alternative paths in order when a path
+// answers 404/405. Spotify renamed some playlist endpoints for new apps
+// (e.g. /tracks → /items, /users/{id}/playlists → /me/playlists), so each
+// call lists the new path first and the old one as a fallback. Retries once
+// on a 429 rate-limit.
+async function spotifyApi(token, method, paths, body) {
+  let res;
+  for (const path of paths) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetch("https://api.spotify.com/v1" + path, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.status === 429 && attempt === 0) {
+        await spSleep(Math.min((parseInt(res.headers.get("Retry-After") || "1", 10) || 1) * 1000, 5000));
+        continue;
+      }
+      break;
+    }
+    if (res.status !== 404 && res.status !== 405) return res;
+  }
+  return res;
+}
+
+// Finds a Spotify track URI for each song (exact for songs that came from
+// Spotify; otherwise a "title artist" search, taking the top hit), then
+// creates the playlist — or replaces the contents of the existing one — and
+// returns { url, added, total }. Throws Error("AUTH") on an expired token and
+// Error("FORBIDDEN") when Spotify refuses (e.g. account not on the app's
+// allow-list while it's in development mode).
+async function syncFolderToSpotify({ token, folderName, songs, existingUrl }) {
+  const resolveOne = async (s) => {
+    const id = String(s.id || "");
+    if (id.startsWith("sp_")) return `spotify:track:${id.slice(3)}`;
+    const artist = (s.artist || s.singer || "").split(",")[0].trim();
+    const q = [normalizeTitle(s.title || ""), artist && artist !== "Unknown" ? artist : ""].filter(Boolean).join(" ");
+    if (!q) return null;
+    const r = await spotifyApi(token, "GET", [`/search?q=${encodeURIComponent(q)}&type=track&limit=1`]);
+    if (r.status === 401) throw new Error("AUTH");
+    if (r.status === 403) throw new Error("FORBIDDEN");
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d?.tracks?.items?.[0]?.uri || null;
+  };
+  const found = [];
+  for (let i = 0; i < songs.length; i += 4) {          // a few at a time, order kept
+    found.push(...await Promise.all(songs.slice(i, i + 4).map(resolveOne)));
+  }
+  const uris = [...new Set(found.filter(Boolean))];
+  const chunks = [];
+  for (let i = 0; i < uris.length; i += 100) chunks.push(uris.slice(i, i + 100));
+
+  const fail = (r) => { throw new Error(r.status === 401 ? "AUTH" : r.status === 403 ? "FORBIDDEN" : "API " + r.status); };
+  let playlistId = existingUrl?.match(/playlist\/([A-Za-z0-9]+)/)?.[1] || null;
+
+  if (playlistId) {
+    // Replace what's there (first 100 via PUT, the rest appended below).
+    const r = await spotifyApi(token, "PUT", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: chunks[0] || [] });
+    if (r.status === 401) throw new Error("AUTH");
+    if (!r.ok) playlistId = null; // deleted / not ours any more → make a fresh one
+  }
+  if (!playlistId) {
+    const payload = { name: folderName, public: true, description: "Requested songs — synced from JamBook" };
+    let r = await spotifyApi(token, "POST", ["/me/playlists"], payload);
+    if (!r.ok && r.status !== 401 && r.status !== 403) {
+      const me = await spotifyApi(token, "GET", ["/me"]);
+      if (me.ok) r = await spotifyApi(token, "POST", [`/users/${(await me.json()).id}/playlists`], payload);
+    }
+    if (!r.ok) fail(r);
+    playlistId = (await r.json()).id;
+    if (chunks[0]) {
+      const a = await spotifyApi(token, "POST", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: chunks[0] });
+      if (!a.ok) fail(a);
+    }
+  }
+  for (const chunk of chunks.slice(1)) {
+    const a = await spotifyApi(token, "POST", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: chunk });
+    if (!a.ok) fail(a);
+  }
+  return { url: `https://open.spotify.com/playlist/${playlistId}`, added: uris.length, total: songs.length };
+}
+
 // ─── Unified DB adapter — Supabase if configured, else localStorage ───
 // Folder shape: { id, name, songs: [...full song objects...], shareCode }
 const newFolderId = () => (window.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(36).slice(2,8));
@@ -2260,9 +2419,14 @@ const db = {
     if (HAS_SUPABASE) {
       // Explicit column list, not select("*") — costs nothing today but
       // avoids silently pulling any future column we don't map below.
-      const { data, error } = await sb.from("folders")
-        .select("id,name,songs,share_token,request_token,request_cap,request_cap_per_user,broadcast_room,original_owner_id,original_owner_name")
-        .eq("user_id", user.id).order("created_at", { ascending: false });
+      const baseCols = "id,name,songs,share_token,request_token,request_cap,request_cap_per_user,broadcast_room,original_owner_id,original_owner_name";
+      const fetchFolders = cols => sb.from("folders")
+        .select(cols).eq("user_id", user.id).order("created_at", { ascending: false });
+      let { data, error } = await fetchFolders(baseCols + ",spotify_playlist_url");
+      // The spotify_playlist_url column only exists once the README's SQL
+      // step has been run — until then, asking for it would make this whole
+      // query fail and every folder disappear. Retry without it instead.
+      if (error) ({ data, error } = await fetchFolders(baseCols));
       if (error) { console.error(error); return []; }
       return data.map(r => ({
         id: r.id, name: r.name,
@@ -2275,6 +2439,7 @@ const db = {
         broadcastRoom:     r.broadcast_room     || null,
         originalOwnerId:   r.original_owner_id  || null,
         originalOwnerName: r.original_owner_name|| null,
+        spotifyPlaylistUrl: r.spotify_playlist_url || null,
       }));
     }
     const fs = [...getUserFolders(user.id)].reverse(); // newest first — stored oldest-first (append on create)
@@ -2332,6 +2497,10 @@ const db = {
         original_owner_id:    folder.originalOwnerId   || null,
         original_owner_name:  folder.originalOwnerName || null,
       };
+      // Only sent when set (and never nulled out here): the column doesn't
+      // exist until the README's SQL step is run, and including it
+      // unconditionally would make EVERY folder write fail until then.
+      if (folder.spotifyPlaylistUrl) patch.spotify_playlist_url = folder.spotifyPlaylistUrl;
       const { error } = await sb.from("folders")
         .update(patch)
         .eq("id", folder.id).eq("user_id", user.id);
@@ -4287,6 +4456,7 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
 }
 
 function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
+  onSpotify, spotifyBusy, spotifyNeedsSync,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
   broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount,
   showToast, onPersistRequestToken, onPersistRequestCaps, onRefresh}) {
@@ -4353,6 +4523,25 @@ function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCusto
               className={`text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-amber-500/50 hover:text-amber-300 transition-all flex-shrink-0 disabled:opacity-50 ${refreshing?"animate-spin":""}`}>
               🔄
             </button>
+          )}
+
+          {!audienceLocked && canBroadcast && onSpotify && (
+            <>
+              <button onClick={onSpotify} disabled={spotifyBusy}
+                title={folder.spotifyPlaylistUrl
+                  ? "Update your shared Spotify playlist with this folder's current songs"
+                  : "Make a Spotify playlist from this folder — listeners get a link on the request page"}
+                className="relative text-xs px-3 py-1.5 rounded-lg border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/10 transition-all flex-shrink-0 disabled:opacity-50">
+                🎧 <span className="hidden sm:inline">{spotifyBusy ? "Syncing…" : folder.spotifyPlaylistUrl ? "Sync Spotify" : "Spotify playlist"}</span>
+                {spotifyNeedsSync && !spotifyBusy && (
+                  <span title="Songs changed since the last sync" className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400"/>
+                )}
+              </button>
+              {folder.spotifyPlaylistUrl && (
+                <a href={folder.spotifyPlaylistUrl} target="_blank" rel="noopener noreferrer" title="Open the playlist in Spotify"
+                  className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-all flex-shrink-0">↗</a>
+              )}
+            </>
           )}
 
           {!audienceLocked && HAS_SUPABASE && (
@@ -5330,6 +5519,14 @@ function RequestSongPage({ token }) {
             <h2 className="text-sm font-semibold text-gray-300 mb-1 text-center md:text-left flex-shrink-0">
               📋 In Queue {totalCap != null ? `(${totalRequested}/${totalCap})` : folder.songs?.length ? `(${folder.songs.length})` : ""}
             </h2>
+            {/* Host's shared Spotify playlist (made/synced from their own
+                account) — opens in the listener's Spotify app, no login. */}
+            {folder.spotifyPlaylistUrl && (
+              <a href={folder.spotifyPlaylistUrl} target="_blank" rel="noopener noreferrer"
+                className="mb-2 flex-shrink-0 flex items-center justify-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/10 transition-all">
+                🎧 Listen on Spotify
+              </a>
+            )}
             {(totalCap != null || personalCap != null) && (
               <p className="text-xs text-gray-600 mb-2 text-center md:text-left flex-shrink-0">
                 {capReached && "This session's song limit has been reached. "}
@@ -5420,6 +5617,9 @@ function App() {
   const isMobile                           = useIsMobile();
   const [pendingShare,setPendingShare]     = React.useState(null);
   const [foldersReady,setFoldersReady]     = React.useState(false);
+  const [spotifyBusyId,setSpotifyBusyId]   = React.useState(null);   // folder currently syncing to Spotify
+  const [spotifyPending,setSpotifyPending] = React.useState(null);   // folder to sync once back from Spotify login
+  const spotifyReturnHandled               = React.useRef(false);
   const [toast,showToast]                  = useToast();
 
   // A ?share= link is resolved entirely behind a full-screen splash so the
@@ -5898,6 +6098,69 @@ function App() {
       setFolders(f => f.map(x => x.id === fid ? updated : x));
     } catch {}
   };
+
+  // ─── Spotify playlist (host) ──────────────────────────────────────
+  // Marker of which songs were in the playlist at the last sync, per folder
+  // on this device — only used to show "songs changed since" on the button.
+  const spotifySongsKey = (f) => (f.songs || []).map(s => s.id).join(",");
+  const spotifyNeedsSync = (f) => !!f?.spotifyPlaylistUrl && LS.get("jb_sp_synced_" + f.id, null) !== spotifySongsKey(f);
+
+  const runSpotifySync = async (folder) => {
+    if (!folder || spotifyBusyId) return;
+    const token = getSpotifyToken();
+    if (!token) { await spotifyLoginRedirect(folder.id); return; } // comes back via the effect below
+    setSpotifyBusyId(folder.id);
+    showToast("Syncing to Spotify…");
+    try {
+      // Always read the folder's songs fresh — requests can land from the
+      // audience page at any moment, bypassing this device's local state.
+      const fresh = await db.getFolderSongs(user, folder.id);
+      const songs = (fresh || folder.songs || []).filter(s => s && s.title);
+      const res = await syncFolderToSpotify({ token, folderName: folder.name, songs, existingUrl: folder.spotifyPlaylistUrl });
+      let saved = true;
+      if (res.url !== folder.spotifyPlaylistUrl) {
+        if (HAS_SUPABASE) {
+          const { error } = await sb.from("folders").update({ spotify_playlist_url: res.url })
+            .eq("id", folder.id).eq("user_id", user.id);
+          saved = !error;
+          if (error) console.error(error);
+        }
+        if (saved) setFolders(fs => fs.map(x => x.id === folder.id ? { ...x, spotifyPlaylistUrl: res.url } : x));
+      }
+      LS.set("jb_sp_synced_" + folder.id, (fresh || folder.songs || []).map(s => s.id).join(","));
+      if (saved) showToast(`Synced ${res.added} of ${res.total} songs to Spotify`);
+      else showToast("Playlist made, but its link couldn't be saved — run the Spotify SQL step in the README");
+      if (!saved) window.open(res.url, "_blank");
+    } catch (e) {
+      if (e.message === "AUTH") { sessionStorage.removeItem("jb_sp_token"); showToast("Spotify session expired — press the button again"); }
+      else if (e.message === "FORBIDDEN") showToast("Spotify refused — is your Spotify email added under User Management in your app?");
+      else showToast("Couldn't sync to Spotify — " + (e.message || "try again"));
+    } finally {
+      setSpotifyBusyId(null);
+    }
+  };
+
+  // Back from Spotify's login page: swap the code for a token once, then
+  // queue the sync for whichever folder the button was pressed on.
+  React.useEffect(() => {
+    if (spotifyReturnHandled.current) return;
+    spotifyReturnHandled.current = true;
+    (async () => {
+      const res = await spotifyHandleRedirect();
+      if (!res) return;
+      if (res.error)  { showToast("Spotify login was cancelled"); return; }
+      if (res.failed) { showToast("Couldn't finish the Spotify login — try again"); return; }
+      if (res.folderId) setSpotifyPending(res.folderId);
+    })();
+  }, []);
+  React.useEffect(() => {
+    if (!spotifyPending || !foldersReady || !user || user.isGuest) return;
+    const f = folders.find(x => x.id === spotifyPending);
+    setSpotifyPending(null);
+    if (!f) return;
+    setActiveFolderId(f.id); setView("folder"); setSidebarCollapsed(false);
+    runSpotifySync(f);
+  }, [spotifyPending, foldersReady, user, folders]);
 
   // Warms the lyrics cache for a folder's songs the first time it's actually
   // opened this session — scoped per-folder (not the whole library at once,
@@ -6486,6 +6749,9 @@ function App() {
         {view==="folder"&&activeFolder&&(
           <FolderView
             folder={activeFolder} songs={folderSongs} vibeSong={vibeSong}
+            onSpotify={(SPOTIFY_USER_CLIENT_ID && HAS_SUPABASE) ? ()=>runSpotifySync(activeFolder) : undefined}
+            spotifyBusy={spotifyBusyId === activeFolder.id}
+            spotifyNeedsSync={spotifyNeedsSync(activeFolder)}
             onOpenSong={s=>openSong(s,activeFolder.id)}
             onRemove={removeFromFolder}
             onRefresh={()=>refreshFolder(activeFolder.id)}
