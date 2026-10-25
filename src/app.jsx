@@ -2194,7 +2194,7 @@ async function preFetchFolderSongs(songs, concurrency = 5) {
 //
 // Paste your Spotify app's Client ID here (see README → Spotify playlist).
 // Empty = the feature stays hidden.
-const SPOTIFY_USER_CLIENT_ID = "";
+const SPOTIFY_USER_CLIENT_ID = "51ad30da10ea49f69100de312dd684c5";
 const SP_SCOPES = "playlist-modify-public playlist-modify-private";
 const spRedirectUri = () => window.location.origin + window.location.pathname;
 const spRandom = (n) => {
