@@ -2399,6 +2399,19 @@ function pingRequestChannel(token) {
   } catch {}
 }
 
+// Link that opens a song in Spotify — no login or API call. Songs that came
+// from Spotify carry its track id in ours (sp_<id>), so those open the exact
+// track; anything else opens a Spotify search for "title artist" (title
+// cleaned of "(From ...)" style suffixes, first artist only), which lands on
+// the right song almost every time.
+function spotifyUrl(song) {
+  const id = String(song?.id || "");
+  if (id.startsWith("sp_")) return `https://open.spotify.com/track/${id.slice(3)}`;
+  const artist = (song?.artist || song?.singer || "").split(",")[0].trim();
+  const q = [normalizeTitle(song?.title || ""), artist && artist !== "Unknown" ? artist : ""].filter(Boolean).join(" ");
+  return `https://open.spotify.com/search/${encodeURIComponent(q)}`;
+}
+
 // ─── Unified DB adapter — Supabase if configured, else localStorage ───
 // Folder shape: { id, name, songs: [...full song objects...], shareCode }
 const newFolderId = () => (window.crypto?.randomUUID?.() ?? String(Date.now()) + Math.random().toString(36).slice(2,8));
@@ -5615,8 +5628,14 @@ function RequestSongPage({ token }) {
                       <div className={`text-gray-200 font-medium truncate ${s.completed ? "line-through" : ""}`}>{s.completed ? "✓ " : ""}{s.title}</div>
                       <div className="text-gray-500 truncate">{s.artist || s.singer || "Unknown"}{(s.album || s.movie) ? ` · ${s.album || s.movie}` : ""}</div>
                     </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <a href={spotifyUrl(s)} target="_blank" rel="noopener noreferrer"
+                        title="Listen on Spotify"
+                        className="flex items-center justify-center w-7 h-7 rounded-lg border border-[#2e2e44] text-gray-500 hover:border-emerald-500/40 hover:text-emerald-400 transition-all">
+                        🎧
+                      </a>
                     {!s.completed && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <>
                         {s.requestedBy === requesterId && (
                           <button onClick={()=>handleRemove(s)} disabled={removingId===s.id}
                             title="Remove your request"
@@ -5634,8 +5653,9 @@ function RequestSongPage({ token }) {
                           className={`flex items-center justify-center w-7 h-7 rounded-lg border flex-shrink-0 transition-all disabled:opacity-50 ${votedIds.has(s.id) ? "border-pink-500/50 text-pink-400 bg-pink-500/10" : "border-[#2e2e44] text-gray-500 hover:border-pink-500/40 hover:text-pink-400"}`}>
                           {votedIds.has(s.id) ? "❤️" : "🤍"}
                         </button>
-                      </div>
+                      </>
                     )}
+                    </div>
                   </div>
                 );
                 return (
