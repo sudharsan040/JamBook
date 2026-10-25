@@ -5643,8 +5643,11 @@ function RequestSongPage({ token }) {
                         {s.requestedBy === requesterId && (
                           <button onClick={()=>handleRemove(s)} disabled={removingId===s.id}
                             title="Remove your request"
-                            className="flex items-center justify-center w-7 h-7 rounded-lg border border-[#2e2e44] text-gray-500 hover:border-red-500/40 hover:text-red-400 transition-all disabled:opacity-50">
-                            🗑
+                            aria-label="Remove your request"
+                            className="flex items-center justify-center w-7 h-7 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-50">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                              <path d="M6 6l12 12M18 6L6 18" />
+                            </svg>
                           </button>
                         )}
                         <button onClick={()=>handleDislike(s)} disabled={dislikingId===s.id}
