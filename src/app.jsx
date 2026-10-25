@@ -2212,6 +2212,32 @@ function getSpotifyToken() {
     return t && t.exp > Date.now() + 60000 ? t.token : null;
   } catch { return null; }
 }
+// A valid access token, silently renewing it with the stored renewal token
+// when the hour is up (so a long session keeps working without another
+// login). Returns null when there's no way to get one without the host
+// logging in again.
+async function ensureSpotifyToken() {
+  const cur = getSpotifyToken();
+  if (cur) return cur;
+  let rt = null;
+  try { rt = localStorage.getItem("jb_sp_refresh"); } catch {}
+  if (!rt) return null;
+  try {
+    const r = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: rt, client_id: SPOTIFY_USER_CLIENT_ID }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.access_token) {
+      if (d.error === "invalid_grant") { try { localStorage.removeItem("jb_sp_refresh"); } catch {} }
+      return null;
+    }
+    sessionStorage.setItem("jb_sp_token", JSON.stringify({ token: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000 }));
+    if (d.refresh_token) { try { localStorage.setItem("jb_sp_refresh", d.refresh_token); } catch {} }
+    return d.access_token;
+  } catch { return null; }
+}
 
 // Sends the host to Spotify to log in; remembers which folder to sync once
 // they're back (the page fully reloads on return).
@@ -2256,6 +2282,7 @@ async function spotifyHandleRedirect() {
     const d = await r.json();
     if (!r.ok || !d.access_token) return { failed: true };
     sessionStorage.setItem("jb_sp_token", JSON.stringify({ token: d.access_token, exp: Date.now() + (d.expires_in || 3600) * 1000 }));
+    if (d.refresh_token) { try { localStorage.setItem("jb_sp_refresh", d.refresh_token); } catch {} }
     return { folderId };
   } catch { return { failed: true }; }
 }
@@ -2285,42 +2312,55 @@ async function spotifyApi(token, method, paths, body) {
   return res;
 }
 
-// Finds a Spotify track URI for each song (exact for songs that came from
-// Spotify; otherwise a "title artist" search, taking the top hit), then
-// creates the playlist — or replaces the contents of the existing one — and
-// returns { url, added, total }. Throws Error("AUTH") on an expired token and
-// Error("FORBIDDEN") when Spotify refuses (e.g. account not on the app's
-// allow-list while it's in development mode).
-async function syncFolderToSpotify({ token, folderName, songs, existingUrl }) {
+// ADD-ONLY sync: finds a Spotify track for each song, then appends whichever
+// aren't already in the playlist — it never removes anything, so songs taken
+// off the request page (or the folder) stay on Spotify. Creates the playlist
+// first if the folder doesn't have one (or the old one is gone). Matches are
+// remembered per folder so a song is only ever searched for once; songs that
+// found nothing are retried only on a manual sync (retryMisses).
+// Returns { url, added, matched, total }. Throws Error("AUTH") on an expired
+// token and Error("FORBIDDEN") when Spotify refuses (e.g. the account isn't
+// on the app's allow-list while it's in development mode).
+async function syncFolderToSpotify({ token, folderId, folderName, songs, existingUrl, retryMisses }) {
+  const cacheKey = "jb_sp_match_" + folderId;
+  const cache = LS.get(cacheKey, {}); // songId -> track uri ("" = searched, nothing found)
   const resolveOne = async (s) => {
     const id = String(s.id || "");
     if (id.startsWith("sp_")) return `spotify:track:${id.slice(3)}`;
+    if (id in cache && !(retryMisses && cache[id] === "")) return cache[id];
     const artist = (s.artist || s.singer || "").split(",")[0].trim();
     const q = [normalizeTitle(s.title || ""), artist && artist !== "Unknown" ? artist : ""].filter(Boolean).join(" ");
-    if (!q) return null;
+    if (!q) return "";
     const r = await spotifyApi(token, "GET", [`/search?q=${encodeURIComponent(q)}&type=track&limit=1`]);
     if (r.status === 401) throw new Error("AUTH");
     if (r.status === 403) throw new Error("FORBIDDEN");
-    if (!r.ok) return null;
+    if (!r.ok) return null; // transient — don't cache, try again next time
     const d = await r.json();
-    return d?.tracks?.items?.[0]?.uri || null;
+    return d?.tracks?.items?.[0]?.uri || "";
   };
   const found = [];
   for (let i = 0; i < songs.length; i += 4) {          // a few at a time, order kept
     found.push(...await Promise.all(songs.slice(i, i + 4).map(resolveOne)));
   }
-  const uris = [...new Set(found.filter(Boolean))];
-  const chunks = [];
-  for (let i = 0; i < uris.length; i += 100) chunks.push(uris.slice(i, i + 100));
+  songs.forEach((s, i) => { const id = String(s.id || ""); if (found[i] !== null && !id.startsWith("sp_")) cache[id] = found[i]; });
+  LS.set(cacheKey, cache);
+  const wanted = [...new Set(found.filter(Boolean))];
 
   const fail = (r) => { throw new Error(r.status === 401 ? "AUTH" : r.status === 403 ? "FORBIDDEN" : "API " + r.status); };
   let playlistId = existingUrl?.match(/playlist\/([A-Za-z0-9]+)/)?.[1] || null;
 
+  // What's already in the playlist, so nothing gets added twice.
+  const have = new Set();
   if (playlistId) {
-    // Replace what's there (first 100 via PUT, the rest appended below).
-    const r = await spotifyApi(token, "PUT", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: chunks[0] || [] });
-    if (r.status === 401) throw new Error("AUTH");
-    if (!r.ok) playlistId = null; // deleted / not ours any more → make a fresh one
+    let path = `/playlists/${playlistId}/items?limit=100`;
+    for (let page = 0; page < 20 && path; page++) {
+      const r = await spotifyApi(token, "GET", [path, path.replace("/items", "/tracks")]);
+      if (r.status === 401) throw new Error("AUTH");
+      if (!r.ok) { playlistId = null; have.clear(); break; } // deleted / not ours any more → make a fresh one
+      const d = await r.json();
+      (d.items || []).forEach(e => { const u = (e.item || e.track)?.uri; if (u) have.add(u); });
+      path = d.next ? d.next.replace("https://api.spotify.com/v1", "") : null;
+    }
   }
   if (!playlistId) {
     const payload = { name: folderName, public: true, description: "Requested songs — synced from JamBook" };
@@ -2331,16 +2371,32 @@ async function syncFolderToSpotify({ token, folderName, songs, existingUrl }) {
     }
     if (!r.ok) fail(r);
     playlistId = (await r.json()).id;
-    if (chunks[0]) {
-      const a = await spotifyApi(token, "POST", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: chunks[0] });
-      if (!a.ok) fail(a);
-    }
   }
-  for (const chunk of chunks.slice(1)) {
-    const a = await spotifyApi(token, "POST", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: chunk });
+  const toAdd = wanted.filter(u => !have.has(u));
+  for (let i = 0; i < toAdd.length; i += 100) {
+    const a = await spotifyApi(token, "POST", [`/playlists/${playlistId}/items`, `/playlists/${playlistId}/tracks`], { uris: toAdd.slice(i, i + 100) });
     if (!a.ok) fail(a);
   }
-  return { url: `https://open.spotify.com/playlist/${playlistId}`, added: uris.length, total: songs.length };
+  return { url: `https://open.spotify.com/playlist/${playlistId}`, added: toAdd.length, matched: wanted.length, total: songs.length };
+}
+
+// Tiny "a song was added" nudge on the request link's live channel, sent by
+// the audience's request page. Carries no data — the host's app (when live
+// sync is on) answers it by re-reading the folder itself, so a spoofed
+// nudge can't put anything in the playlist that isn't really in the folder.
+// The connection is opened just for the send and closed right after.
+function pingRequestChannel(token) {
+  if (!HAS_SUPABASE || !token) return;
+  try {
+    const ch = sb.channel(`jambook-req:${token}`);
+    const done = () => { try { sb.removeChannel(ch); } catch {} };
+    ch.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        Promise.resolve(ch.send({ type: "broadcast", event: "song_added", payload: {} }))
+          .catch(() => {}).finally(() => setTimeout(done, 400));
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") done();
+    });
+  } catch {}
 }
 
 // ─── Unified DB adapter — Supabase if configured, else localStorage ───
@@ -4456,7 +4512,7 @@ function SpinWheelModal({ songs: rawSongs, numbers: rawNumbers, onOpenSong, onCl
 }
 
 function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCustom,onEditSong,
-  onSpotify, spotifyBusy, spotifyNeedsSync,
+  onSpotify, spotifyBusy, spotifyNeedsSync, spotifyLive, onToggleSpotifyLive,
   canBroadcast, isBroadcasting, onStartBroadcast, onStopBroadcast,
   broadcastModerator, followingBroadcast, onLeaveBroadcast, viewerCount,
   showToast, onPersistRequestToken, onPersistRequestCaps, onRefresh}) {
@@ -4540,6 +4596,16 @@ function FolderView({folder,songs,vibeSong,onOpenSong,onRemove,onBack,onAddCusto
               {folder.spotifyPlaylistUrl && (
                 <a href={folder.spotifyPlaylistUrl} target="_blank" rel="noopener noreferrer" title="Open the playlist in Spotify"
                   className="text-xs px-2.5 py-1.5 rounded-lg border border-[#2e2e44] text-gray-400 hover:border-emerald-500/40 hover:text-emerald-400 transition-all flex-shrink-0">↗</a>
+              )}
+              {folder.spotifyPlaylistUrl && onToggleSpotifyLive && (
+                <button onClick={onToggleSpotifyLive}
+                  title={spotifyLive
+                    ? "Live sync is ON — new requests are added to your Spotify playlist as they come in. Click to pause."
+                    : "Turn on live sync — add each new request to your Spotify playlist automatically (while JamBook is open)"}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg border transition-all flex-shrink-0 flex items-center gap-1.5 ${spotifyLive ? "border-emerald-500 bg-emerald-600/20 text-emerald-300" : "border-[#2e2e44] text-gray-500 hover:border-emerald-500/40 hover:text-emerald-400"}`}>
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${spotifyLive ? "bg-emerald-400 animate-pulse" : "bg-gray-600"}`}/>
+                  <span className="hidden sm:inline">{spotifyLive ? "Live" : "Live sync"}</span>
+                </button>
               )}
             </>
           )}
@@ -5290,6 +5356,7 @@ function RequestSongPage({ token }) {
     if (res.ok) {
       setAddedIds(prev => new Set(prev).add(song.id));
       showToast(res.alreadyAdded ? "Already in the queue" : `Requested "${song.title}"!`);
+      if (!res.alreadyAdded) pingRequestChannel(token); // lets the host's live Spotify sync know
       refreshFolder();
     } else {
       showToast(res.error || "Couldn't add — try again");
@@ -5620,6 +5687,13 @@ function App() {
   const [spotifyBusyId,setSpotifyBusyId]   = React.useState(null);   // folder currently syncing to Spotify
   const [spotifyPending,setSpotifyPending] = React.useState(null);   // folder to sync once back from Spotify login
   const spotifyReturnHandled               = React.useRef(false);
+  const [spotifyLive,setSpotifyLive]       = React.useState(() => LS.get("jb_sp_live", {})); // { [folderId]: true } live sync on
+  const foldersRef                         = React.useRef([]);   // latest folders, for timers/callbacks
+  const liveSyncRef                        = React.useRef(null); // latest liveSyncFolder, for timers/callbacks
+  const spotifySyncingRef                  = React.useRef({});   // folderId -> a sync is running
+  const spotifyQueuedRef                   = React.useRef({});   // folderId -> run again after the current one
+  const spotifyTimerRef                    = React.useRef({});   // folderId -> debounce timer
+  const spotifyLoginWarnedRef              = React.useRef(false);
   const [toast,showToast]                  = useToast();
 
   // A ?share= link is resolved entirely behind a full-screen splash so the
@@ -6100,37 +6174,65 @@ function App() {
   };
 
   // ─── Spotify playlist (host) ──────────────────────────────────────
-  // Marker of which songs were in the playlist at the last sync, per folder
-  // on this device — only used to show "songs changed since" on the button.
+  // Marker of which songs were in the folder at the last sync, per folder on
+  // this device — only used to show "songs changed since" on the button.
   const spotifySongsKey = (f) => (f.songs || []).map(s => s.id).join(",");
   const spotifyNeedsSync = (f) => !!f?.spotifyPlaylistUrl && LS.get("jb_sp_synced_" + f.id, null) !== spotifySongsKey(f);
 
+  // Always read the songs fresh (requests land from the audience page at any
+  // moment, bypassing this device's local state). With a request link that's
+  // the slim call the audience page already uses (~250 bytes/song, no lyrics).
+  const songsForSpotify = async (folder) => {
+    if (folder.requestToken) {
+      const f = await fetchFolderByRequestToken(folder.requestToken);
+      if (f?.songs) return f.songs;
+    }
+    return (await db.getFolderSongs(user, folder.id)) || folder.songs || [];
+  };
+
+  // One add-only sync pass. Returns the result, or { needLogin: true } when
+  // there's no way to get a Spotify token without the host logging in.
+  const doSpotifySync = async (folder, { retryMisses }) => {
+    const token = await ensureSpotifyToken();
+    if (!token) return { needLogin: true };
+    const all = await songsForSpotify(folder);
+    const songs = all.filter(s => s && s.title);
+    const res = await syncFolderToSpotify({
+      token, folderId: folder.id, folderName: folder.name, songs,
+      existingUrl: folder.spotifyPlaylistUrl, retryMisses,
+    });
+    let saved = true;
+    if (res.url !== folder.spotifyPlaylistUrl) {
+      if (HAS_SUPABASE) {
+        const { error } = await sb.from("folders").update({ spotify_playlist_url: res.url })
+          .eq("id", folder.id).eq("user_id", user.id);
+        saved = !error;
+        if (error) console.error(error);
+      }
+      if (saved) setFolders(fs => fs.map(x => x.id === folder.id ? { ...x, spotifyPlaylistUrl: res.url } : x));
+    }
+    LS.set("jb_sp_synced_" + folder.id, all.map(x => x.id).join(","));
+    return { ...res, saved };
+  };
+
+  // Manual button: first press creates the playlist, later presses add
+  // whatever's new. Never removes anything from Spotify.
   const runSpotifySync = async (folder) => {
     if (!folder || spotifyBusyId) return;
-    const token = getSpotifyToken();
-    if (!token) { await spotifyLoginRedirect(folder.id); return; } // comes back via the effect below
+    if (!(await ensureSpotifyToken())) { await spotifyLoginRedirect(folder.id); return; } // returns via the effect below
     setSpotifyBusyId(folder.id);
     showToast("Syncing to Spotify…");
     try {
-      // Always read the folder's songs fresh — requests can land from the
-      // audience page at any moment, bypassing this device's local state.
-      const fresh = await db.getFolderSongs(user, folder.id);
-      const songs = (fresh || folder.songs || []).filter(s => s && s.title);
-      const res = await syncFolderToSpotify({ token, folderName: folder.name, songs, existingUrl: folder.spotifyPlaylistUrl });
-      let saved = true;
-      if (res.url !== folder.spotifyPlaylistUrl) {
-        if (HAS_SUPABASE) {
-          const { error } = await sb.from("folders").update({ spotify_playlist_url: res.url })
-            .eq("id", folder.id).eq("user_id", user.id);
-          saved = !error;
-          if (error) console.error(error);
-        }
-        if (saved) setFolders(fs => fs.map(x => x.id === folder.id ? { ...x, spotifyPlaylistUrl: res.url } : x));
+      const res = await doSpotifySync(folder, { retryMisses: true });
+      const missing = res.total - res.matched;
+      if (!res.saved) {
+        showToast("Playlist made, but its link couldn't be saved — run the Spotify SQL step in the README");
+        window.open(res.url, "_blank");
+      } else if (res.added > 0) {
+        showToast(`Added ${res.added} new song${res.added === 1 ? "" : "s"} to Spotify${missing > 0 ? ` · ${missing} not found there` : ""}`);
+      } else {
+        showToast(missing > 0 ? `Playlist is up to date · ${missing} song${missing === 1 ? "" : "s"} not found on Spotify` : "Spotify playlist is up to date");
       }
-      LS.set("jb_sp_synced_" + folder.id, (fresh || folder.songs || []).map(s => s.id).join(","));
-      if (saved) showToast(`Synced ${res.added} of ${res.total} songs to Spotify`);
-      else showToast("Playlist made, but its link couldn't be saved — run the Spotify SQL step in the README");
-      if (!saved) window.open(res.url, "_blank");
     } catch (e) {
       if (e.message === "AUTH") { sessionStorage.removeItem("jb_sp_token"); showToast("Spotify session expired — press the button again"); }
       else if (e.message === "FORBIDDEN") showToast("Spotify refused — is your Spotify email added under User Management in your app?");
@@ -6139,6 +6241,89 @@ function App() {
       setSpotifyBusyId(null);
     }
   };
+
+  // ── Live sync: on while the host wants new requests to flow into the
+  // playlist as they happen (per folder, remembered on this device). Triggered
+  // by (a) the audience request page's "song added" nudge, (b) the host
+  // adding songs here, and (c) once when the app opens, to catch up on
+  // anything missed while it was closed. Batched over a few seconds.
+  foldersRef.current = folders;
+  const liveSyncFolder = async (folderId) => {
+    if (spotifySyncingRef.current[folderId]) { spotifyQueuedRef.current[folderId] = true; return; }
+    const folder = foldersRef.current.find(x => x.id === folderId);
+    if (!folder || !folder.spotifyPlaylistUrl) return;
+    spotifySyncingRef.current[folderId] = true;
+    try {
+      const res = await doSpotifySync(folder, { retryMisses: false });
+      if (res.needLogin) {
+        if (!spotifyLoginWarnedRef.current) {
+          spotifyLoginWarnedRef.current = true;
+          showToast("Spotify live sync paused — press Sync Spotify to log in again");
+        }
+      } else if (res.added > 0) {
+        showToast(`🎧 Added ${res.added} song${res.added === 1 ? "" : "s"} to Spotify`);
+      }
+    } catch (e) {
+      if (e.message === "AUTH") sessionStorage.removeItem("jb_sp_token"); // next pass renews it
+      else console.warn("[spotify live sync]", e.message);
+    } finally {
+      spotifySyncingRef.current[folderId] = false;
+      if (spotifyQueuedRef.current[folderId]) { spotifyQueuedRef.current[folderId] = false; scheduleLiveSync(folderId); }
+    }
+  };
+  liveSyncRef.current = liveSyncFolder;
+  const scheduleLiveSync = (folderId, delay = 8000) => {
+    clearTimeout(spotifyTimerRef.current[folderId]);
+    spotifyTimerRef.current[folderId] = setTimeout(() => liveSyncRef.current(folderId), delay);
+  };
+
+  const toggleSpotifyLive = async (folder) => {
+    const on = !spotifyLive[folder.id];
+    const next = { ...spotifyLive };
+    if (on) next[folder.id] = true; else delete next[folder.id];
+    setSpotifyLive(next);
+    LS.set("jb_sp_live", next);
+    if (!on) { showToast("Spotify live sync paused"); return; }
+    showToast("Spotify live sync on — new requests go to your playlist");
+    if (!(await ensureSpotifyToken())) { await spotifyLoginRedirect(folder.id); return; }
+    liveSyncFolder(folder.id); // catch up right away
+  };
+
+  // Listen for the request page's nudge on every folder that has live sync on.
+  const liveChannelsKey = JSON.stringify(
+    folders.filter(f => spotifyLive[f.id] && f.requestToken && f.spotifyPlaylistUrl).map(f => [f.id, f.requestToken])
+  );
+  React.useEffect(() => {
+    if (!HAS_SUPABASE || !user || user.isGuest) return;
+    const pairs = JSON.parse(liveChannelsKey);
+    if (!pairs.length) return;
+    const chans = pairs.map(([fid, tok]) => {
+      const ch = sb.channel(`jambook-req:${tok}`);
+      ch.on("broadcast", { event: "song_added" }, () => scheduleLiveSync(fid)).subscribe();
+      return ch;
+    });
+    return () => chans.forEach(ch => { try { sb.removeChannel(ch); } catch {} });
+  }, [liveChannelsKey, user?.id]);
+
+  // Host adds/removes songs here → sync too (reorders alone are ignored).
+  const livePrevIdsRef = React.useRef({});
+  React.useEffect(() => {
+    folders.forEach(f => {
+      if (!spotifyLive[f.id] || !f.spotifyPlaylistUrl) return;
+      const key = (f.songs || []).map(x => x.id).sort().join(",");
+      const prev = livePrevIdsRef.current[f.id];
+      livePrevIdsRef.current[f.id] = key;
+      if (prev !== undefined && prev !== key) scheduleLiveSync(f.id);
+    });
+  }, [folders, spotifyLive]);
+
+  // Once when the app opens: catch up on anything missed while it was closed.
+  const spotifyCaughtUpRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!foldersReady || !user || user.isGuest || spotifyCaughtUpRef.current) return;
+    spotifyCaughtUpRef.current = true;
+    folders.filter(f => spotifyLive[f.id] && f.spotifyPlaylistUrl).forEach(f => scheduleLiveSync(f.id, 3000));
+  }, [foldersReady, user]);
 
   // Back from Spotify's login page: swap the code for a token once, then
   // queue the sync for whichever folder the button was pressed on.
@@ -6752,6 +6937,8 @@ function App() {
             onSpotify={(SPOTIFY_USER_CLIENT_ID && HAS_SUPABASE) ? ()=>runSpotifySync(activeFolder) : undefined}
             spotifyBusy={spotifyBusyId === activeFolder.id}
             spotifyNeedsSync={spotifyNeedsSync(activeFolder)}
+            spotifyLive={!!spotifyLive[activeFolder.id]}
+            onToggleSpotifyLive={()=>toggleSpotifyLive(activeFolder)}
             onOpenSong={s=>openSong(s,activeFolder.id)}
             onRemove={removeFromFolder}
             onRefresh={()=>refreshFolder(activeFolder.id)}

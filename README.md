@@ -256,7 +256,8 @@ popup, and both the Sheet ID and credentials stay server-side.
 A folder owner can press **🎧 Spotify playlist** in a folder to create one public
 playlist from its songs; audience members then get a **Listen on Spotify** button
 on the request page that opens it (no login for them). Pressing **Sync Spotify**
-later replaces the playlist's contents with the folder's current songs.
+later only **adds** songs that aren't in the playlist yet — it never removes anything,
+so songs taken off the request page stay on Spotify.
 
 1. **Create a Spotify app** at <https://developer.spotify.com/dashboard> → *Create app*.
    - Redirect URI: `https://sudharsan040.github.io/JamBook/` (exactly, with the trailing slash)
@@ -295,9 +296,17 @@ $$;
 grant execute on function public.folder_songs_slim(text) to anon, authenticated;
 ```
 
+**Live sync:** once a playlist exists, the **Live sync** toggle next to the Spotify button
+adds each new request to the playlist within a few seconds (the request page sends a
+tiny "song added" nudge; your app re-reads the folder and adds what's new). It runs only
+while JamBook is open on your device, catches up when you reopen it, and pauses when you
+toggle it off. It's remembered per folder on that device.
+
 Notes: songs are matched on Spotify by title + artist (exact for songs added from
-Spotify), so a few — especially regional ones — may be skipped; the toast says
-"Synced X of Y". The Spotify login lasts about an hour per browser tab.
+Spotify), so a few — especially regional ones — may be skipped; the toast says how many
+weren't found. Matches are remembered per folder so each song is searched only once.
+The Spotify login is renewed automatically while you keep using the app; if it ever
+lapses, press **Sync Spotify** to log in again.
 
 ### Making changes
 Edit `src/app.jsx` and commit. The GitHub Action automatically:
